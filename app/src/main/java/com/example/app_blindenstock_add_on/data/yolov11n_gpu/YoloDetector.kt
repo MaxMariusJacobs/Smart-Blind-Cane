@@ -133,7 +133,6 @@ class YoloDetector(private val context: Context) {
         val startTime = System.currentTimeMillis()
         frameSequence++
 
-        // Letterboxing: Verhindert Bild-Stauchung für akkurate Distanzmessung
         val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
         val dx = (320f - bitmap.width * scale) / 2f
         val dy = (320f - bitmap.height * scale) / 2f
@@ -175,8 +174,8 @@ class YoloDetector(private val context: Context) {
             cachedSurfaces
         }
 
-        val filteredObjects = applyNMS(rawObjects, 0.45f)
-        val filteredSurfaces = applyNMS(rawSurfaces, 0.45f)
+        val filteredObjects = applyNMS(rawObjects, AppConfig.NMS_IOU_THRESHOLD)
+        val filteredSurfaces = applyNMS(rawSurfaces, AppConfig.NMS_IOU_THRESHOLD)
 
         val combinedCandidates = filteredSurfaces + filteredObjects
         val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking)
@@ -206,7 +205,7 @@ class YoloDetector(private val context: Context) {
 
     private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = 0.28f
+        val confThreshold = AppConfig.CONF_THRESHOLD_OBJECTS
 
         for (c in 0 until 2100) {
             var maxScore = 0f
@@ -230,7 +229,6 @@ class YoloDetector(private val context: Context) {
                 val wRaw = data[2][c] / scale
                 val hRaw = data[3][c] / scale
 
-                // Inverse Matrix: Korrektur des Letterboxings
                 val cx = ((cxRaw - padX) / activeW).coerceIn(0f, 1f)
                 val cy = ((cyRaw - padY) / activeH).coerceIn(0f, 1f)
                 val w = (wRaw / activeW).coerceIn(0f, 1f)
@@ -256,7 +254,7 @@ class YoloDetector(private val context: Context) {
 
     private fun processSurfaceTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = 0.38f
+        val confThreshold = AppConfig.CONF_THRESHOLD_SURFACE
 
         for (c in 0 until 2100) {
             var maxScore = 0f
@@ -331,7 +329,6 @@ class YoloDetector(private val context: Context) {
                 val floorY = (b.y + b.height).coerceIn(0f, 1f)
                 val area = b.width * b.height
 
-                // Flächenzuwachs pro Sekunde statt pro Frame berechnen
                 val dt = (now - tracked.lastSeen) / 1000.0f
                 val dFloorY = if (dt > 0) (floorY - tracked.prevFloorY) / dt else 0f
                 val dAreaPerSec = if (dt > 0) (area - tracked.prevArea) / dt else 0f

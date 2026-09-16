@@ -7,10 +7,10 @@ object AppConfig {
     const val CORRIDOR_RIGHT = 0.68f // Tiefer = Korridor schmaler, Höher = breiter
 
     // Warnabstände für interne Smartphone-Kamera
-    const val STOP_FLOOR_PHONE = 0.84f   // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
-    const val PERSON_FLOOR_PHONE = 0.60f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val OBJECT_FLOOR_PHONE = 0.62f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val STAIRS_FLOOR_PHONE = 0.60f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    const val STOP_FLOOR_PHONE = 0.85f   // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
+    const val PERSON_FLOOR_PHONE = 0.45f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    const val OBJECT_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    const val STAIRS_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
 
     // Warnabstände für ESP32-Kamera
     const val STOP_FLOOR_ESP = 0.84f     // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
@@ -23,7 +23,10 @@ object AppConfig {
     const val CONF_THRESHOLD_SURFACE = 0.50f // Höher = Strengere Bodenerkennung, weniger Fehler
     const val NMS_IOU_THRESHOLD = 0.40f      // Tiefer = Löscht überlappende Boxen aggressiver, Höher = erlaubt mehr Boxen übereinander
 
-    const val EVADE_LOCK_MS = 3500L           // Tiefer = Wechselt Ausweichrichtung schneller, Höher = Richtung bleibt länger stabil
+    // Frame-Filter (Entprellung)
+    const val HAZARD_FRAMES_REQUIRED = 3      // Höher = Robuster gegen falsche Warnungen, Tiefer = Löst schneller aus
     const val CLEAR_FRAMES_REQUIRED = 6       // Tiefer = Gibt schneller Entwarnung, Höher = robuster gegen falsche Entwarnungen
+
+    const val EVADE_LOCK_MS = 3500L           // Tiefer = Wechselt Ausweichrichtung schneller, Höher = Richtung bleibt länger stabil
     const val TREND_GROWTH_PER_SEC = 0.15f    // Tiefer = Löst bei langsamer Annäherung aus, Höher = Löst nur bei schneller Annäherung aus
 }

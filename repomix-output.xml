@@ -175,163 +175,6 @@ class ExampleInstrumentedTest {
 }
 </file>
 
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/audio/speech_feedback_manager.kt">
-package com.example.app_blindenstock_add_on.data.audio
-
-import android.content.Context
-import android.media.AudioAttributes
-import android.speech.tts.TextToSpeech
-import android.util.Log
-import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer.GuidanceOutput
-import java.util.Locale
-
-class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
-
-    private var tts: TextToSpeech? = TextToSpeech(context, this)
-    private var isInitialized = false
-
-    private var lastSpokenPhrase = ""
-    private var lastSpokenTime = 0L
-    private var lastSpokenPriority = 1
-
-    // Entprellung gegen Frame-Dropouts
-    private var consecutiveClearFrames = 0
-    private val requiredClearFrames = 8
-
-    private val emergencyCooldownMs = 1200L
-    private val persistentWarningRepeatMs = 3500L // Wiederholt aktive Warnung alle 3.5s
-    private val clearHeartbeatMs = 8000L
-
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.let { engine ->
-                val result = engine.setLanguage(Locale.US)
-                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    engine.language = Locale.ENGLISH
-                }
-                engine.setSpeechRate(1.20f)
-
-                val audioAttributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-                engine.setAudioAttributes(audioAttributes)
-
-                isInitialized = true
-                Log.d("SpeechFeedbackManager", "TTS ready on Media Channel.")
-            }
-        } else {
-            Log.e("SpeechFeedbackManager", "TTS initialization failed: $status")
-        }
-    }
-
-    fun processGuidance(guidance: GuidanceOutput): Boolean {
-        if (!isInitialized) return false
-
-        val now = System.currentTimeMillis()
-        val elapsed = now - lastSpokenTime
-
-        if (guidance.priorityLevel == 1) {
-            consecutiveClearFrames++
-        } else {
-            consecutiveClearFrames = 0
-        }
-
-        // =========================================================================
-        // REAKTION 1: KONTROLLIERTES "CLEAR"
-        // =========================================================================
-        val isHazardClearing = (guidance.priorityLevel == 1) && (lastSpokenPriority >= 2)
-
-        if (isHazardClearing) {
-            val minPlayTimeMs = if (lastSpokenPriority == 3) 700L else 1400L
-            val isAudioFinished = (tts?.isSpeaking != true) && (elapsed >= minPlayTimeMs)
-            val isStableClear = consecutiveClearFrames >= requiredClearFrames
-
-            if (isAudioFinished && isStableClear) {
-                lastSpokenPhrase = "Clear"
-                lastSpokenTime = now
-                lastSpokenPriority = 1
-                consecutiveClearFrames = 0
-
-                tts?.speak("Clear", TextToSpeech.QUEUE_FLUSH, null, "CLEAR_CONFIRMED")
-                return true
-            }
-            return false
-        }
-
-        // =========================================================================
-        // REAKTION 2: NOTFALL ("STOP!")
-        // =========================================================================
-        val isEmergencyEscalation = guidance.priorityLevel == 3 && lastSpokenPriority < 3
-
-        if (tts?.isSpeaking == true && !isEmergencyEscalation) {
-            return false
-        }
-
-        // Richtungswechsel erkennen
-        val isDirectionChange = (guidance.phrase.contains("step left") && lastSpokenPhrase.contains("step right")) ||
-                (guidance.phrase.contains("step right") && lastSpokenPhrase.contains("step left"))
-
-        val isSameOrSimilar = isSimilarOrSame(guidance.phrase, lastSpokenPhrase)
-
-        // Mindestabstand berechnen
-        val requiredInterval = when {
-            isEmergencyEscalation -> emergencyCooldownMs
-            isDirectionChange -> 1400L // Richtungsanpassung sofort nach Ausreden der alten Phrase
-            isSameOrSimilar -> persistentWarningRepeatMs // Gleiche Warnung alle 3.5s wiederholen
-            guidance.priorityLevel == 2 -> 2200L
-            else -> clearHeartbeatMs
-        }
-
-        if (elapsed < requiredInterval && !isEmergencyEscalation) {
-            return false
-        }
-
-        lastSpokenPhrase = guidance.phrase
-        lastSpokenTime = now
-        lastSpokenPriority = guidance.priorityLevel
-
-        tts?.speak(guidance.phrase, TextToSpeech.QUEUE_FLUSH, null, "GUIDANCE_UTTERANCE")
-        Log.d("SpeechFeedbackManager", "Spoken: ${guidance.phrase}")
-        return true
-    }
-
-    private fun isSimilarOrSame(newPhrase: String, oldPhrase: String): Boolean {
-        if (oldPhrase.isBlank()) return false
-        if (newPhrase.equals(oldPhrase, ignoreCase = true)) return true
-
-        val cleanNew = newPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
-        val cleanOld = oldPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
-
-        // Gegensätzliche Richtungen dürfen NIEMALS als ähnlich gelten
-        val newHasLeft = cleanNew.contains("step left")
-        val oldHasLeft = cleanOld.contains("step left")
-        val newHasRight = cleanNew.contains("step right")
-        val oldHasRight = cleanOld.contains("step right")
-        if ((newHasLeft && oldHasRight) || (newHasRight && oldHasLeft)) {
-            return false
-        }
-
-        val wordsNew = cleanNew.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
-        val wordsOld = cleanOld.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
-
-        if (wordsNew.isEmpty() || wordsOld.isEmpty()) return false
-
-        val intersection = wordsNew.intersect(wordsOld).size
-        val union = wordsNew.union(wordsOld).size
-
-        return (intersection.toFloat() / union.toFloat()) >= 0.75f
-    }
-
-    fun shutdown() {
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
-        isInitialized = false
-    }
-}
-</file>
-
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/LocalCameraSource.kt">
 package com.example.app_blindenstock_add_on.data.video
 
@@ -523,33 +366,6 @@ val Typography = Typography(
     )
     */
 )
-</file>
-
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/AppConfig.kt">
-package com.example.app_blindenstock_add_on
-
-object AppConfig {
-    // Gehkorridor-Grenzen (x-Achse)
-    const val CORRIDOR_LEFT = 0.32f
-    const val CORRIDOR_RIGHT = 0.68f
-
-    // Distanz-Schwellenwerte für interne Smartphone Kamera
-    const val STOP_FLOOR_PHONE = 0.84f
-    const val PERSON_FLOOR_PHONE = 0.60f
-    const val OBJECT_FLOOR_PHONE = 0.62f
-    const val STAIRS_FLOOR_PHONE = 0.60f
-
-    // Distanz-Schwellenwerte für ESP32-CAM (Ausgleich des Bildwinkels)
-    const val STOP_FLOOR_ESP = 0.84f
-    const val PERSON_FLOOR_ESP = 0.62f
-    const val OBJECT_FLOOR_ESP = 0.64f
-    const val STAIRS_FLOOR_ESP = 0.62f
-
-    // Warn-Logik & Hysterese
-    const val EVADE_LOCK_MS = 3500L
-    const val CLEAR_FRAMES_REQUIRED = 6
-    const val TREND_GROWTH_PER_SEC = 0.15f // Flächenzuwachs pro Sekunde
-}
 </file>
 
 <file path="app/src/main/keepRules/rules.keep">
@@ -1664,6 +1480,166 @@ model = YOLO("yolov8n.pt")
 model.export(format="onnx", imgsz=640, optimize=True)
 </file>
 
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/audio/speech_feedback_manager.kt">
+package com.example.app_blindenstock_add_on.data.audio
+
+import android.content.Context
+import android.media.AudioAttributes
+import android.speech.tts.TextToSpeech
+import android.util.Log
+import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer.GuidanceOutput
+import java.util.Locale
+
+class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
+
+    private var tts: TextToSpeech? = TextToSpeech(context, this)
+    private var isInitialized = false
+
+    private var lastSpokenPhrase = ""
+    private var lastSpokenTime = 0L
+    private var lastSpokenPriority = 1
+
+    // Entprellung gegen Frame-Dropouts
+    private var consecutiveClearFrames = 0
+    private val requiredClearFrames = 8
+
+    private val emergencyCooldownMs = 1200L
+    private val persistentWarningRepeatMs = 3500L // Wiederholt aktive Warnung alle 3.5s
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.let { engine ->
+                val result = engine.setLanguage(Locale.US)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    engine.language = Locale.ENGLISH
+                }
+                engine.setSpeechRate(1.20f)
+
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                engine.setAudioAttributes(audioAttributes)
+
+                isInitialized = true
+                Log.d("SpeechFeedbackManager", "TTS ready on Media Channel.")
+            }
+        } else {
+            Log.e("SpeechFeedbackManager", "TTS initialization failed: $status")
+        }
+    }
+
+    fun processGuidance(guidance: GuidanceOutput): Boolean {
+        if (!isInitialized) return false
+
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastSpokenTime
+
+        if (guidance.priorityLevel == 1) {
+            consecutiveClearFrames++
+        } else {
+            consecutiveClearFrames = 0
+        }
+
+        // =========================================================================
+        // REAKTION 1: KONTROLLIERTES "CLEAR"
+        // =========================================================================
+        val isHazardClearing = (guidance.priorityLevel == 1) && (lastSpokenPriority >= 2)
+
+        if (isHazardClearing) {
+            val minPlayTimeMs = if (lastSpokenPriority == 3) 700L else 1400L
+            val isAudioFinished = (tts?.isSpeaking != true) && (elapsed >= minPlayTimeMs)
+            val isStableClear = consecutiveClearFrames >= requiredClearFrames
+
+            if (isAudioFinished && isStableClear) {
+                lastSpokenPhrase = "Clear"
+                lastSpokenTime = now
+                lastSpokenPriority = 1
+                consecutiveClearFrames = 0
+
+                tts?.speak("Clear", TextToSpeech.QUEUE_FLUSH, null, "CLEAR_CONFIRMED")
+                return true
+            }
+            return false
+        }
+
+        // Wenn "Clear" der aktuelle Status ist und "Clear" bereits der alte Status war -> Stumm bleiben.
+        if (guidance.priorityLevel == 1 && lastSpokenPriority == 1) {
+            return false
+        }
+
+        // =========================================================================
+        // REAKTION 2: NOTFALL & WARNUNGEN
+        // =========================================================================
+        val isEmergencyEscalation = guidance.priorityLevel == 3 && lastSpokenPriority < 3
+
+        if (tts?.isSpeaking == true && !isEmergencyEscalation) {
+            return false
+        }
+
+        // Richtungswechsel erkennen
+        val isDirectionChange = (guidance.phrase.contains("step left") && lastSpokenPhrase.contains("step right")) ||
+                (guidance.phrase.contains("step right") && lastSpokenPhrase.contains("step left"))
+
+        val isSameOrSimilar = isSimilarOrSame(guidance.phrase, lastSpokenPhrase)
+
+        // Mindestabstand berechnen
+        val requiredInterval = when {
+            isEmergencyEscalation -> emergencyCooldownMs
+            isDirectionChange -> 1400L // Richtungsanpassung sofort nach Ausreden der alten Phrase
+            isSameOrSimilar -> persistentWarningRepeatMs // Gleiche Warnung alle 3.5s wiederholen
+            else -> 2200L
+        }
+
+        if (elapsed < requiredInterval && !isEmergencyEscalation) {
+            return false
+        }
+
+        lastSpokenPhrase = guidance.phrase
+        lastSpokenTime = now
+        lastSpokenPriority = guidance.priorityLevel
+
+        tts?.speak(guidance.phrase, TextToSpeech.QUEUE_FLUSH, null, "GUIDANCE_UTTERANCE")
+        Log.d("SpeechFeedbackManager", "Spoken: ${guidance.phrase}")
+        return true
+    }
+
+    private fun isSimilarOrSame(newPhrase: String, oldPhrase: String): Boolean {
+        if (oldPhrase.isBlank()) return false
+        if (newPhrase.equals(oldPhrase, ignoreCase = true)) return true
+
+        val cleanNew = newPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
+        val cleanOld = oldPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
+
+        // Gegensätzliche Richtungen dürfen NIEMALS als ähnlich gelten
+        val newHasLeft = cleanNew.contains("step left")
+        val oldHasLeft = cleanOld.contains("step left")
+        val newHasRight = cleanNew.contains("step right")
+        val oldHasRight = cleanOld.contains("step right")
+        if ((newHasLeft && oldHasRight) || (newHasRight && oldHasLeft)) {
+            return false
+        }
+
+        val wordsNew = cleanNew.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
+        val wordsOld = cleanOld.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
+
+        if (wordsNew.isEmpty() || wordsOld.isEmpty()) return false
+
+        val intersection = wordsNew.intersect(wordsOld).size
+        val union = wordsNew.union(wordsOld).size
+
+        return (intersection.toFloat() / union.toFloat()) >= 0.75f
+    }
+
+    fun shutdown() {
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        isInitialized = false
+    }
+}
+</file>
+
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/data/sensor/UserMotion.kt">
 package com.example.app_blindenstock_add_on.data.sensor
 
@@ -1999,7 +1975,6 @@ class YoloDetector(private val context: Context) {
         val startTime = System.currentTimeMillis()
         frameSequence++
 
-        // Letterboxing: Verhindert Bild-Stauchung für akkurate Distanzmessung
         val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
         val dx = (320f - bitmap.width * scale) / 2f
         val dy = (320f - bitmap.height * scale) / 2f
@@ -2041,8 +2016,8 @@ class YoloDetector(private val context: Context) {
             cachedSurfaces
         }
 
-        val filteredObjects = applyNMS(rawObjects, 0.45f)
-        val filteredSurfaces = applyNMS(rawSurfaces, 0.45f)
+        val filteredObjects = applyNMS(rawObjects, AppConfig.NMS_IOU_THRESHOLD)
+        val filteredSurfaces = applyNMS(rawSurfaces, AppConfig.NMS_IOU_THRESHOLD)
 
         val combinedCandidates = filteredSurfaces + filteredObjects
         val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking)
@@ -2072,7 +2047,7 @@ class YoloDetector(private val context: Context) {
 
     private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = 0.28f
+        val confThreshold = AppConfig.CONF_THRESHOLD_OBJECTS
 
         for (c in 0 until 2100) {
             var maxScore = 0f
@@ -2096,7 +2071,6 @@ class YoloDetector(private val context: Context) {
                 val wRaw = data[2][c] / scale
                 val hRaw = data[3][c] / scale
 
-                // Inverse Matrix: Korrektur des Letterboxings
                 val cx = ((cxRaw - padX) / activeW).coerceIn(0f, 1f)
                 val cy = ((cyRaw - padY) / activeH).coerceIn(0f, 1f)
                 val w = (wRaw / activeW).coerceIn(0f, 1f)
@@ -2122,7 +2096,7 @@ class YoloDetector(private val context: Context) {
 
     private fun processSurfaceTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = 0.38f
+        val confThreshold = AppConfig.CONF_THRESHOLD_SURFACE
 
         for (c in 0 until 2100) {
             var maxScore = 0f
@@ -2197,7 +2171,6 @@ class YoloDetector(private val context: Context) {
                 val floorY = (b.y + b.height).coerceIn(0f, 1f)
                 val area = b.width * b.height
 
-                // Flächenzuwachs pro Sekunde statt pro Frame berechnen
                 val dt = (now - tracked.lastSeen) / 1000.0f
                 val dFloorY = if (dt > 0) (floorY - tracked.prevFloorY) / dt else 0f
                 val dAreaPerSec = if (dt > 0) (area - tracked.prevArea) / dt else 0f
@@ -3746,6 +3719,38 @@ private fun SourceOption(
             )
         }
     }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/AppConfig.kt">
+package com.example.app_blindenstock_add_on
+
+object AppConfig {
+
+    // Geh-Korridor einstellen
+    const val CORRIDOR_LEFT = 0.32f  // Höher = Korridor schmaler, Tiefer = breiter
+    const val CORRIDOR_RIGHT = 0.68f // Tiefer = Korridor schmaler, Höher = breiter
+
+    // Warnabstände für interne Smartphone-Kamera
+    const val STOP_FLOOR_PHONE = 0.85f   // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
+    const val PERSON_FLOOR_PHONE = 0.45f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    const val OBJECT_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    const val STAIRS_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+
+    // Warnabstände für ESP32-Kamera
+    const val STOP_FLOOR_ESP = 0.84f     // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
+    const val PERSON_FLOOR_ESP = 0.62f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    const val OBJECT_FLOOR_ESP = 0.64f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    const val STAIRS_FLOOR_ESP = 0.62f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+
+    // KI-Erkennungs-Schwellenwerte
+    const val CONF_THRESHOLD_OBJECTS = 0.40f // Höher = Weniger falsche Objekte, übersieht aber evtl. echte
+    const val CONF_THRESHOLD_SURFACE = 0.50f // Höher = Strengere Bodenerkennung, weniger Fehler
+    const val NMS_IOU_THRESHOLD = 0.40f      // Tiefer = Löscht überlappende Boxen aggressiver, Höher = erlaubt mehr Boxen übereinander
+
+    const val EVADE_LOCK_MS = 3500L           // Tiefer = Wechselt Ausweichrichtung schneller, Höher = Richtung bleibt länger stabil
+    const val CLEAR_FRAMES_REQUIRED = 6       // Tiefer = Gibt schneller Entwarnung, Höher = robuster gegen falsche Entwarnungen
+    const val TREND_GROWTH_PER_SEC = 0.15f    // Tiefer = Löst bei langsamer Annäherung aus, Höher = Löst nur bei schneller Annäherung aus
 }
 </file>
 
