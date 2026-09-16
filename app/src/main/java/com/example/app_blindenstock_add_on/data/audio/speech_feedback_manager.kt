@@ -22,7 +22,6 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
 
     private val emergencyCooldownMs = 1200L
     private val persistentWarningRepeatMs = 3500L // Wiederholt aktive Warnung alle 3.5s
-    private val clearHeartbeatMs = 8000L
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
@@ -81,8 +80,13 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
             return false
         }
 
+        // Wenn "Clear" der aktuelle Status ist und "Clear" bereits der alte Status war -> Stumm bleiben.
+        if (guidance.priorityLevel == 1 && lastSpokenPriority == 1) {
+            return false
+        }
+
         // =========================================================================
-        // REAKTION 2: NOTFALL ("STOP!")
+        // REAKTION 2: NOTFALL & WARNUNGEN
         // =========================================================================
         val isEmergencyEscalation = guidance.priorityLevel == 3 && lastSpokenPriority < 3
 
@@ -101,8 +105,7 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
             isEmergencyEscalation -> emergencyCooldownMs
             isDirectionChange -> 1400L // Richtungsanpassung sofort nach Ausreden der alten Phrase
             isSameOrSimilar -> persistentWarningRepeatMs // Gleiche Warnung alle 3.5s wiederholen
-            guidance.priorityLevel == 2 -> 2200L
-            else -> clearHeartbeatMs
+            else -> 2200L
         }
 
         if (elapsed < requiredInterval && !isEmergencyEscalation) {
