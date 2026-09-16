@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.util.Log
+import com.example.app_blindenstock_add_on.AppConfig
 import com.example.app_blindenstock_add_on.domain.model.*
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
@@ -23,7 +24,6 @@ class YoloDetector(private val context: Context) {
     private var objectGpuDelegate: GpuDelegate? = null
     private var surfaceGpuDelegate: GpuDelegate? = null
 
-    // Zero-Allocation Resampling: Wiederverwendbare Objekte im RAM
     private val scaledBitmap = Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888)
     private val scaleCanvas = Canvas(scaledBitmap)
     private val scaleMatrix = Matrix()
@@ -101,7 +101,7 @@ class YoloDetector(private val context: Context) {
             val bufA = loadModelFile(context, "yolo11n_objects.tflite")
             objectInterpreter = Interpreter(bufA, optA)
         } catch (e: Exception) {
-            Log.e("YoloDetector", "Error loading yolo11n_objects.tflite", e)
+            Log.e("YoloDetector", "Fehler: yolo11n_objects.tflite", e)
         }
 
         try {
@@ -119,7 +119,7 @@ class YoloDetector(private val context: Context) {
             surfaceInterpreter = Interpreter(bufB, optB)
             surfaceHasDualOutputs = (surfaceInterpreter?.outputTensorCount ?: 0) > 1
         } catch (e: Exception) {
-            Log.e("YoloDetector", "Error loading yolo11n_surface.tflite", e)
+            Log.e("YoloDetector", "Fehler: yolo11n_surface.tflite", e)
         }
     }
 
@@ -133,17 +133,28 @@ class YoloDetector(private val context: Context) {
         val startTime = System.currentTimeMillis()
         frameSequence++
 
-        // Bild skalieren ohne neue Bitmap im Heap zu erzeugen
+        // Letterboxing: Verhindert Bild-Stauchung für akkurate Distanzmessung
+        val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
+        val dx = (320f - bitmap.width * scale) / 2f
+        val dy = (320f - bitmap.height * scale) / 2f
+
         scaleMatrix.reset()
-        scaleMatrix.setScale(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
+        scaleMatrix.postScale(scale, scale)
+        scaleMatrix.postTranslate(dx, dy)
+        scaleCanvas.drawColor(android.graphics.Color.BLACK)
         scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
         preprocessNCHW(scaledBitmap)
+
+        val padX = dx / 320f
+        val padY = dy / 320f
+        val activeW = (bitmap.width * scale) / 320f
+        val activeH = (bitmap.height * scale) / 320f
 
         val rawObjects = mutableListOf<Detection>()
         objectInterpreter?.let { interp ->
             inputBuffer.rewind()
             interp.run(inputBuffer, outputObjects)
-            rawObjects.addAll(processObjectTensors(outputObjects[0]))
+            rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH))
         }
 
         val rawSurfaces = if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
@@ -156,7 +167,7 @@ class YoloDetector(private val context: Context) {
                 } else {
                     interp.run(inputBuffer, outputSurface0)
                 }
-                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0]))
+                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH))
             }
             cachedSurfaces = freshSurfaces
             freshSurfaces
@@ -188,20 +199,18 @@ class YoloDetector(private val context: Context) {
         inputBuffer.rewind()
         bitmap.getPixels(pixelArray, 0, 320, 0, 0, 320, 320)
         val totalPixels = 320 * 320
-
         for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 16) and 0xFF) * 0.003921569f)
         for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 8) and 0xFF) * 0.003921569f)
         for (i in 0 until totalPixels) inputBuffer.putFloat((pixelArray[i] and 0xFF) * 0.003921569f)
     }
 
-    private fun processObjectTensors(data: Array<FloatArray>): List<Detection> {
+    private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
         val confThreshold = 0.28f
 
         for (c in 0 until 2100) {
             var maxScore = 0f
             var classId = -1
-
             for (r in 4 until 84) {
                 val score = data[r][c]
                 if (score > maxScore) {
@@ -209,7 +218,6 @@ class YoloDetector(private val context: Context) {
                     classId = r - 4
                 }
             }
-
             if (maxScore > confThreshold && classId in objectLabels.indices) {
                 val label = objectLabels[classId]
                 if (label !in relevantObstacles) continue
@@ -217,18 +225,24 @@ class YoloDetector(private val context: Context) {
                 val isNormalized = data[0][c] <= 1.0f && data[2][c] <= 1.0f
                 val scale = if (isNormalized) 1.0f else 320.0f
 
-                val cx = data[0][c] / scale
-                val cy = data[1][c] / scale
-                val w = data[2][c] / scale
-                val h = data[3][c] / scale
+                val cxRaw = data[0][c] / scale
+                val cyRaw = data[1][c] / scale
+                val wRaw = data[2][c] / scale
+                val hRaw = data[3][c] / scale
+
+                // Inverse Matrix: Korrektur des Letterboxings
+                val cx = ((cxRaw - padX) / activeW).coerceIn(0f, 1f)
+                val cy = ((cyRaw - padY) / activeH).coerceIn(0f, 1f)
+                val w = (wRaw / activeW).coerceIn(0f, 1f)
+                val h = (hRaw / activeH).coerceIn(0f, 1f)
 
                 candidates.add(
                     Detection(
                         boundingBox = BoundingBox(
                             x = (cx - w / 2f).coerceIn(0f, 1f),
                             y = (cy - h / 2f).coerceIn(0f, 1f),
-                            width = w.coerceIn(0f, 1f),
-                            height = h.coerceIn(0f, 1f)
+                            width = w,
+                            height = h
                         ),
                         classId = classId + 100,
                         className = label,
@@ -240,14 +254,13 @@ class YoloDetector(private val context: Context) {
         return candidates
     }
 
-    private fun processSurfaceTensors(data: Array<FloatArray>): List<Detection> {
+    private fun processSurfaceTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
         val confThreshold = 0.38f
 
         for (c in 0 until 2100) {
             var maxScore = 0f
             var classId = -1
-
             for (r in 4 until 8) {
                 val score = data[r][c]
                 if (score > maxScore) {
@@ -255,23 +268,27 @@ class YoloDetector(private val context: Context) {
                     classId = r - 4
                 }
             }
-
             if (maxScore > confThreshold && classId in surfaceLabels.indices) {
                 val isNormalized = data[0][c] <= 1.0f && data[2][c] <= 1.0f
                 val scale = if (isNormalized) 1.0f else 320.0f
 
-                val cx = data[0][c] / scale
-                val cy = data[1][c] / scale
-                val w = data[2][c] / scale
-                val h = data[3][c] / scale
+                val cxRaw = data[0][c] / scale
+                val cyRaw = data[1][c] / scale
+                val wRaw = data[2][c] / scale
+                val hRaw = data[3][c] / scale
+
+                val cx = ((cxRaw - padX) / activeW).coerceIn(0f, 1f)
+                val cy = ((cyRaw - padY) / activeH).coerceIn(0f, 1f)
+                val w = (wRaw / activeW).coerceIn(0f, 1f)
+                val h = (hRaw / activeH).coerceIn(0f, 1f)
 
                 candidates.add(
                     Detection(
                         boundingBox = BoundingBox(
                             x = (cx - w / 2f).coerceIn(0f, 1f),
                             y = (cy - h / 2f).coerceIn(0f, 1f),
-                            width = w.coerceIn(0f, 1f),
-                            height = h.coerceIn(0f, 1f)
+                            width = w,
+                            height = h
                         ),
                         classId = classId,
                         className = surfaceLabels[classId],
@@ -314,13 +331,14 @@ class YoloDetector(private val context: Context) {
                 val floorY = (b.y + b.height).coerceIn(0f, 1f)
                 val area = b.width * b.height
 
+                // Flächenzuwachs pro Sekunde statt pro Frame berechnen
                 val dt = (now - tracked.lastSeen) / 1000.0f
                 val dFloorY = if (dt > 0) (floorY - tracked.prevFloorY) / dt else 0f
-                val dArea = area - tracked.prevArea
+                val dAreaPerSec = if (dt > 0) (area - tracked.prevArea) / dt else 0f
 
                 val trend = when {
-                    dArea > 0.015f -> "growing"
-                    dArea < -0.015f -> "shrinking"
+                    dAreaPerSec > AppConfig.TREND_GROWTH_PER_SEC -> "growing"
+                    dAreaPerSec < -AppConfig.TREND_GROWTH_PER_SEC -> "shrinking"
                     else -> "constant"
                 }
 

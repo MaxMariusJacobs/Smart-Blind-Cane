@@ -22,6 +22,7 @@ import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
 import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
 import com.example.app_blindenstock_add_on.data.video.VideoSource
 import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
+import com.example.app_blindenstock_add_on.domain.model.Detection
 import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +40,9 @@ data class ServiceMetrics(
     val isWalking: Boolean = false,
     val detectionCount: Int = 0,
     val isRunning: Boolean = false,
-    val currentPhrase: String = "Clear"
+    val currentPhrase: String = "Clear",
+    val detections: List<Detection> = emptyList(),
+    val primarySurface: String = "unknown"
 )
 
 class AppForegroundService : Service(), LifecycleOwner {
@@ -51,7 +54,7 @@ class AppForegroundService : Service(), LifecycleOwner {
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
 
     private var videoSource: VideoSource? = null
-    private lateinit var detector: YoloDetector
+    private var detector: YoloDetector? = null
     private var motionTracker: UserMotionTracker? = null
     private var speechManager: SpeechFeedbackManager? = null
 
@@ -79,32 +82,18 @@ class AppForegroundService : Service(), LifecycleOwner {
         createNotificationChannel()
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "AppForegroundService::CpuLock"
-        )
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AppForegroundService::CpuLock")
 
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        wifiLock = wifiManager.createWifiLock(
-            WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
-            "AppForegroundService::WifiLock"
-        )
-
-        detector = YoloDetector(this)
-        motionTracker = UserMotionTracker(this).apply { start() }
-        speechManager = SpeechFeedbackManager(this)
+        wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "AppForegroundService::WifiLock")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
 
-        if (wakeLock?.isHeld != true) {
-            wakeLock?.acquire(10 * 60 * 60 * 1000L)
-        }
-        if (wifiLock?.isHeld != true) {
-            wifiLock?.acquire()
-        }
+        if (wakeLock?.isHeld != true) wakeLock?.acquire(10 * 60 * 60 * 1000L)
+        if (wifiLock?.isHeld != true) wifiLock?.acquire()
 
         val sourceType = intent?.getStringExtra("EXTRA_SOURCE_TYPE") ?: "MJPEG"
         val url = intent?.getStringExtra("EXTRA_STREAM_URL") ?: "http://192.168.4.1/stream"
@@ -114,23 +103,11 @@ class AppForegroundService : Service(), LifecycleOwner {
 
         val isEspMode = (sourceType != "CAMERA")
 
-        val notification = createNotification()
         try {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             _metrics.value = _metrics.value.copy(isRunning = true)
         } catch (e: Exception) {
             android.util.Log.e("AppForegroundService", "Start-Fehler: ${e.message}", e)
-        }
-
-        videoSource = if (sourceType == "CAMERA") {
-            LocalCameraSource(this, this)
-        } else {
-            MjpegStreamer(OkHttpClient(), url)
         }
 
         fpsCounter = 0
@@ -139,6 +116,17 @@ class AppForegroundService : Service(), LifecycleOwner {
 
         serviceScope.launch {
             try {
+                // ANR-Schutz: Vollständige Instanziierung im Background Thread
+                detector = YoloDetector(this@AppForegroundService)
+                motionTracker = UserMotionTracker(this@AppForegroundService).apply { start() }
+                speechManager = SpeechFeedbackManager(this@AppForegroundService)
+
+                videoSource = if (sourceType == "CAMERA") {
+                    LocalCameraSource(this@AppForegroundService, this@AppForegroundService)
+                } else {
+                    MjpegStreamer(OkHttpClient(), url)
+                }
+
                 videoSource?.getFrames()
                     ?.conflate()
                     ?.collect { bitmap ->
@@ -153,9 +141,7 @@ class AppForegroundService : Service(), LifecycleOwner {
                         }
 
                         val isWalking = motionTracker?.isUserWalking ?: false
-                        val analysisResult = detector.detect(bitmap, isWalking)
-                        val detections = analysisResult.detections
-                        val infTime = detector.lastInferenceTime
+                        val analysisResult = detector?.detect(bitmap, isWalking) ?: return@collect
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = analysisResult,
@@ -167,11 +153,13 @@ class AppForegroundService : Service(), LifecycleOwner {
 
                         _metrics.value = ServiceMetrics(
                             fps = smoothedFps,
-                            inferenceTime = infTime,
+                            inferenceTime = detector?.lastInferenceTime ?: 0L,
                             isWalking = isWalking,
-                            detectionCount = detections.size,
+                            detectionCount = analysisResult.detections.size,
                             isRunning = true,
-                            currentPhrase = guidance.phrase
+                            currentPhrase = guidance.phrase,
+                            detections = analysisResult.detections,
+                            primarySurface = analysisResult.primarySurface
                         )
                     }
             } catch (e: Exception) {
@@ -191,14 +179,11 @@ class AppForegroundService : Service(), LifecycleOwner {
         motionTracker = null
         speechManager?.shutdown()
         speechManager = null
-        detector.close()
+        detector?.close()
+        detector = null
 
-        if (wifiLock?.isHeld == true) {
-            wifiLock?.release()
-        }
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        if (wifiLock?.isHeld == true) wifiLock?.release()
+        if (wakeLock?.isHeld == true) wakeLock?.release()
 
         _metrics.value = ServiceMetrics(isRunning = false)
         serviceJob.cancel()
@@ -208,8 +193,8 @@ class AppForegroundService : Service(), LifecycleOwner {
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Blindenstock Assistenz aktiv")
-            .setContentText("ESP32-CAM Tracking & Audio laufen im Hintergrund.")
+            .setContentTitle("Smart Cane Active")
+            .setContentText("Background environment tracking is running.")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -218,13 +203,8 @@ class AppForegroundService : Service(), LifecycleOwner {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val serviceChannel = NotificationChannel(
-                CHANNEL_ID,
-                "App Assistance Service Channel",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(serviceChannel)
+            val serviceChannel = NotificationChannel(CHANNEL_ID, "App Assistance Service", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(serviceChannel)
         }
     }
 }

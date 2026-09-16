@@ -1,9 +1,9 @@
 package com.example.app_blindenstock_add_on.framework.ui
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -20,10 +20,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
 import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
 
@@ -32,74 +30,49 @@ fun CameraScreen(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsState()
 
     Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-        color = Color(0xFF090C10)
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .systemBarsPadding()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Oberes Telemetrie-Band
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF161B22))
-                    .border(1.dp, Color(0xFF30363D), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TelemetryPill(label = "FPS", value = "${uiState.currentFps}", color = Color(0xFF58A6FF))
-                TelemetryPill(label = "LAT", value = "${uiState.inferenceTime}ms", color = Color(0xFF58A6FF))
-                TelemetryPill(label = "MOTION", value = if (uiState.isUserWalking) "WALK" else "STAND", color = Color(0xFFD29922))
-                TelemetryPill(label = "SURFACE", value = uiState.primarySurface.uppercase(), color = Color.White)
-            }
 
-            // Roadway-Filter Switch
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF161B22))
-                    .border(1.dp, Color(0xFF30363D), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "ROADWAY ALERTS",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
+                    text = "Live View",
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = if (uiState.isRoadwayAlertsEnabled) Color(0xFF58A6FF) else Color(0xFF8B949E)
+                    color = MaterialTheme.colorScheme.onBackground
                 )
 
-                Switch(
-                    checked = uiState.isRoadwayAlertsEnabled,
-                    onCheckedChange = { viewModel.toggleRoadwayAlerts() },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = Color(0xFF238636),
-                        uncheckedThumbColor = Color(0xFF8B949E),
-                        uncheckedTrackColor = Color(0xFF21262D)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Roadway Alerts",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(end = 8.dp),
+                        color = MaterialTheme.colorScheme.onBackground
                     )
-                )
+                    Switch(
+                        checked = uiState.isRoadwayAlertsEnabled,
+                        onCheckedChange = { viewModel.toggleRoadwayAlerts() }
+                    )
+                }
             }
 
-            // Seitenverhältnis-treuer Videocontainer (Kein Verzerren bei 640x480)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.Black)
-                    .border(1.dp, Color(0xFF30363D), RoundedCornerShape(10.dp)),
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
                 val frame = uiState.currentFrame
@@ -111,11 +84,11 @@ fun CameraScreen(viewModel: MainViewModel) {
                             .fillMaxSize()
                             .wrapContentSize(Alignment.Center)
                             .aspectRatio(frameAspect)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(24.dp))
                     ) {
                         Image(
                             bitmap = frame.asImageBitmap(),
-                            contentDescription = "Video Feed",
+                            contentDescription = "Live Video",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.FillBounds
                         )
@@ -124,21 +97,19 @@ fun CameraScreen(viewModel: MainViewModel) {
                             val canvasWidth = size.width
                             val canvasHeight = size.height
 
-                            // Gehkorridor-Hilfslinien (35% und 65%)
                             drawLine(
-                                color = Color(0x3358A6FF),
-                                start = Offset(canvasWidth * 0.35f, 0f),
-                                end = Offset(canvasWidth * 0.35f, canvasHeight),
-                                strokeWidth = 2f
+                                color = Color.White.copy(alpha = 0.2f),
+                                start = Offset(canvasWidth * 0.32f, 0f),
+                                end = Offset(canvasWidth * 0.32f, canvasHeight),
+                                strokeWidth = 3f
                             )
                             drawLine(
-                                color = Color(0x3358A6FF),
-                                start = Offset(canvasWidth * 0.65f, 0f),
-                                end = Offset(canvasWidth * 0.65f, canvasHeight),
-                                strokeWidth = 2f
+                                color = Color.White.copy(alpha = 0.2f),
+                                start = Offset(canvasWidth * 0.68f, 0f),
+                                end = Offset(canvasWidth * 0.68f, canvasHeight),
+                                strokeWidth = 3f
                             )
 
-                            // Bounding Boxes
                             uiState.detections.forEach { det ->
                                 if (det.className in listOf("sidewalk", "path")) return@forEach
                                 if (!uiState.isRoadwayAlertsEnabled && det.className == "roadway") return@forEach
@@ -149,87 +120,102 @@ fun CameraScreen(viewModel: MainViewModel) {
                                 val height = det.boundingBox.height * canvasHeight
 
                                 val boxColor = when (det.priority) {
-                                    "CRITICAL" -> Color(0xFFFF3333)
-                                    "HIGH" -> Color(0xFFFF9800)
-                                    "MEDIUM" -> Color(0xFFFFEB3B)
-                                    else -> Color(0xFF4CAF50)
+                                    "CRITICAL" -> Color(0xFFEF4444)
+                                    "HIGH" -> Color(0xFFF97316)
+                                    "MEDIUM" -> Color(0xFFEAB308)
+                                    else -> Color(0xFF22C55E)
                                 }
 
                                 drawRect(
                                     color = boxColor,
                                     topLeft = Offset(left, top),
                                     size = Size(width, height),
-                                    style = Stroke(width = 3.5f)
+                                    style = Stroke(width = 5f)
                                 )
 
-                                val tag = "${det.className} ${(det.score * 100).toInt()}%"
+                                val tag = det.className.replaceFirstChar { it.uppercase() }
                                 drawContext.canvas.nativeCanvas.apply {
                                     val paint = android.graphics.Paint().apply {
                                         color = android.graphics.Color.WHITE
-                                        textSize = 28f
+                                        textSize = 36f
                                         isFakeBoldText = true
-                                        setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
+                                        typeface = android.graphics.Typeface.SANS_SERIF
+                                        setShadowLayer(8f, 0f, 0f, android.graphics.Color.BLACK)
                                     }
-                                    drawText(tag, left + 8f, (top - 10f).coerceAtLeast(30f), paint)
+                                    drawText(tag, left + 12f, (top - 16f).coerceAtLeast(45f), paint)
                                 }
                             }
                         }
                     }
+
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(16.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.Black.copy(alpha = 0.5f))
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .animateContentSize(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text("${uiState.currentFps} FPS", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text("${uiState.inferenceTime} ms", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text(if (uiState.isUserWalking) "Walking" else "Standing", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    }
+
                 } else {
                     Text(
-                        text = "WAITING FOR CAMERA STREAM...",
-                        color = Color(0xFF8B949E),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp
+                        text = "Connecting camera...",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.White.copy(alpha = 0.7f)
                     )
                 }
             }
 
-            // Aktives Sprach-Banner
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(
-                        1.dp,
-                        if (uiState.currentGuidancePhrase.startsWith("Stop")) Color(0xFFF85149) else Color(0xFF238636),
-                        RoundedCornerShape(8.dp)
-                    ),
-                shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF161B22))
+                    .animateContentSize(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Column {
+                    Text(
+                        text = "Current Audio Guidance",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AnimatedContent(
+                            targetState = uiState.currentGuidancePhrase,
+                            transitionSpec = {
+                                fadeIn() togetherWith fadeOut() using SizeTransform(clip = false)
+                            },
+                            label = "phrase_morph"
+                        ) { targetPhrase ->
+                            Text(
+                                text = targetPhrase,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = if (targetPhrase.startsWith("Stop"))
+                                    MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+
                         Text(
-                            text = "AUDIO STATUS",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 9.sp,
-                            color = Color(0xFF8B949E)
-                        )
-                        Text(
-                            text = uiState.currentGuidancePhrase,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = when {
-                                uiState.currentGuidancePhrase.startsWith("Stop") -> Color(0xFFFF7B72)
-                                uiState.currentGuidancePhrase == "Clear" -> Color(0xFF7EE787)
-                                else -> Color(0xFFFFA657)
-                            }
+                            text = "${uiState.detections.size} Objects",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
                         )
                     }
-
-                    Text(
-                        text = "${uiState.detections.size} OBJECTS",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        color = Color(0xFF8B949E)
-                    )
                 }
             }
 
@@ -238,41 +224,15 @@ fun CameraScreen(viewModel: MainViewModel) {
                     viewModel.stopStream()
                     viewModel.navigateTo(AppScreen.START)
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF21262D),
-                    contentColor = Color(0xFFF85149)
-                ),
-                shape = RoundedCornerShape(6.dp)
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {
                 Text(
-                    text = "STOP PIPELINE",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
+                    text = "Stop Pipeline",
+                    style = MaterialTheme.typography.titleMedium
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun TelemetryPill(label: String, value: String, color: Color) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            color = Color(0xFF8B949E)
-        )
-        Text(
-            text = value,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
     }
 }

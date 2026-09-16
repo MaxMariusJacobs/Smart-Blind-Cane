@@ -13,7 +13,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
-import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
 import com.example.app_blindenstock_add_on.framework.system_services.AppForegroundService
 import com.example.app_blindenstock_add_on.framework.ui.CameraScreen
 import com.example.app_blindenstock_add_on.framework.ui.StartScreen
@@ -50,8 +49,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val detector = YoloDetector(this)
-        viewModel = MainViewModel(detector)
+        viewModel = MainViewModel()
+        viewModel.loadUrl(this) // Lädt gespeicherte URL beim Start
 
         setContent {
             App_BlindenstockaddonTheme {
@@ -89,7 +88,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startBackgroundService(sourceType: String, url: String) {
-        // GPU-Schutz: UI-Stream schließen, bevor der Service die GPU anfordert
         viewModel.stopStream()
 
         val intent = Intent(this, AppForegroundService::class.java).apply {
@@ -100,9 +98,8 @@ class MainActivity : ComponentActivity() {
         try {
             startForegroundService(intent)
             viewModel.setBackgroundRunning(true)
-            android.util.Log.d("MainActivity", "Background service started with type $sourceType.")
         } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "Failed to start service: ${e.message}", e)
+            android.util.Log.e("MainActivity", "Start-Fehler: ${e.message}", e)
         }
     }
 
@@ -110,6 +107,5 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, AppForegroundService::class.java)
         stopService(intent)
         viewModel.setBackgroundRunning(false)
-        android.util.Log.d("MainActivity", "Background service stopped.")
     }
 }

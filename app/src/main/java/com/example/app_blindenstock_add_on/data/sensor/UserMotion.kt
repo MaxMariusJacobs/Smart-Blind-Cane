@@ -18,19 +18,20 @@ class UserMotionTracker(context: Context) : SensorEventListener {
         private set
 
     private var lastMovementTime = 0L
-    private val movementTimeoutMs = 1500L // 1.5s nach dem letzten Schritt gilt der Nutzer als stehend
+    private val movementTimeoutMs = 1500L
 
     fun start() {
         try {
             stepDetector?.let {
+                // Polling-Rate für Akku-Schonung gedrosselt
                 sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
             }
         } catch (e: SecurityException) {
-            android.util.Log.w("UserMotionTracker", "Step Detector permission missing, fallback to linear acceleration.")
+            android.util.Log.w("UserMotionTracker", "Step Detector permission missing.")
         }
 
         linearAcc?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
     }
 
@@ -53,7 +54,6 @@ class UserMotionTracker(context: Context) : SensorEventListener {
                 val z = event.values[2]
                 val magnitude = sqrt((x * x + y * y + z * z).toDouble()).toFloat()
 
-                // Beschleunigungsschwelle für normale Gehbewegung
                 if (magnitude > 1.2f) {
                     isUserWalking = true
                     lastMovementTime = now
@@ -61,7 +61,6 @@ class UserMotionTracker(context: Context) : SensorEventListener {
             }
         }
 
-        // Automatisch auf "stehend" setzen, wenn Timeout abgelaufen
         if (now - lastMovementTime > movementTimeoutMs) {
             isUserWalking = false
         }

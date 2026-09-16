@@ -48,15 +48,14 @@ data class MainUiState(
     val currentFps: Int = 0
 )
 
-class MainViewModel(
-    private val detector: YoloDetector
-) : ViewModel() {
+class MainViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var streamJob: Job? = null
     private var videoSource: VideoSource? = null
+    private var detector: YoloDetector? = null
     private var motionTracker: UserMotionTracker? = null
     private var speechManager: SpeechFeedbackManager? = null
 
@@ -74,7 +73,10 @@ class MainViewModel(
                         isBackgroundRunning = metrics.isRunning,
                         currentFps = metrics.fps,
                         inferenceTime = metrics.inferenceTime,
-                        isUserWalking = metrics.isWalking
+                        isUserWalking = metrics.isWalking,
+                        currentGuidancePhrase = metrics.currentPhrase,
+                        detections = metrics.detections,
+                        primarySurface = metrics.primarySurface
                     )
                 }
             }
@@ -92,6 +94,18 @@ class MainViewModel(
         AppForegroundService.allowRoadwayAlerts = next
     }
 
+    fun loadUrl(context: Context) {
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val saved = prefs.getString("stream_url", "http://192.168.4.1/stream") ?: "http://192.168.4.1/stream"
+        _uiState.value = _uiState.value.copy(streamUrl = saved)
+    }
+
+    fun saveUrl(context: Context, url: String) {
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("stream_url", url).apply()
+        _uiState.value = _uiState.value.copy(streamUrl = url)
+    }
+
     fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
         if (_uiState.value.isStreaming) return
 
@@ -99,21 +113,9 @@ class MainViewModel(
         context.stopService(serviceIntent)
         _uiState.value = _uiState.value.copy(isBackgroundRunning = false)
 
-        speechManager = SpeechFeedbackManager(context)
-        motionTracker = UserMotionTracker(context).apply { start() }
-
         val type = _uiState.value.sourceType
         val url = _uiState.value.streamUrl
         val isEspMode = (type == SourceType.MJPEG)
-
-        videoSource = when (type) {
-            SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url)
-            SourceType.CAMERA -> {
-                val activity = context as? androidx.activity.ComponentActivity
-                    ?: throw IllegalStateException("Context must be a ComponentActivity")
-                LocalCameraSource(context, activity)
-            }
-        }
 
         fpsCounter = 0
         fpsWindowStart = System.currentTimeMillis()
@@ -122,6 +124,19 @@ class MainViewModel(
         _uiState.value = _uiState.value.copy(isStreaming = true)
 
         streamJob = viewModelScope.launch(Dispatchers.Default) {
+            detector = YoloDetector(context)
+            speechManager = SpeechFeedbackManager(context)
+            motionTracker = UserMotionTracker(context).apply { start() }
+
+            videoSource = when (type) {
+                SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url)
+                SourceType.CAMERA -> {
+                    val activity = context as? androidx.activity.ComponentActivity
+                        ?: throw IllegalStateException("Context must be a ComponentActivity")
+                    LocalCameraSource(context, activity)
+                }
+            }
+
             try {
                 videoSource?.getFrames()
                     ?.conflate()
@@ -137,8 +152,8 @@ class MainViewModel(
                         }
 
                         val isWalking = motionTracker?.isUserWalking ?: false
-                        val result = detector.detect(bitmap, isWalking)
-                        val infTime = detector.lastInferenceTime
+                        val result = detector?.detect(bitmap, isWalking) ?: return@collect
+                        val infTime = detector?.lastInferenceTime ?: 0L
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = result,
@@ -176,18 +191,30 @@ class MainViewModel(
     fun stopStream() {
         streamJob?.cancel()
         streamJob = null
-        videoSource?.stop()
+
+        val vs = videoSource
+        val mt = motionTracker
+        val sm = speechManager
+        val det = detector
+
         videoSource = null
-        motionTracker?.stop()
         motionTracker = null
-        speechManager?.shutdown()
         speechManager = null
+        detector = null
+
         _uiState.value = _uiState.value.copy(isStreaming = false, currentFrame = null, detections = emptyList())
+
+        // Blockierendes Zerstören der Objekte vom Main-Thread fernhalten (verhindert ANR)
+        viewModelScope.launch(Dispatchers.IO) {
+            vs?.stop()
+            mt?.stop()
+            sm?.shutdown()
+            det?.close()
+        }
     }
 
     override fun onCleared() {
         super.onCleared()
         stopStream()
-        detector.close()
     }
 }

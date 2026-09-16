@@ -4,14 +4,17 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
@@ -23,14 +26,12 @@ class MjpegStreamer(
     @Volatile
     private var activeCall: Call? = null
 
-    // Optimierter Client für Endlos-Streams: Connect-Timeout kurz, Read-Timeout UNENDLICH (0)
     private val streamClient = client.newBuilder()
         .connectTimeout(4, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS) // Verhindert jegliche Timeout-Abbrüche im Stream!
+        .readTimeout(0, TimeUnit.MILLISECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
-    // 640x480 direkt beim Dekodieren halbieren (spart enorm viel Rechenzeit und RAM)
     private val decodeOptions = BitmapFactory.Options().apply {
         inSampleSize = 2
         inPreferredConfig = Bitmap.Config.RGB_565
@@ -69,6 +70,9 @@ class MjpegStreamer(
 
         try {
             while (true) {
+                // Deadlock-Schutz: Bricht sofort ab, wenn UI den Job stoppt
+                if (!currentCoroutineContext().isActive) break
+
                 val frameBytes = readJpegFrame(bufferedInput) ?: break
                 val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
                 if (bitmap != null) {
@@ -76,7 +80,7 @@ class MjpegStreamer(
                 }
             }
         } catch (e: Exception) {
-            Log.w("MjpegStreamer", "Stream-Verbindung getrennt: {e.message}")
+            Log.w("MjpegStreamer", "Stream getrennt: ${e.message}")
         } finally {
             response.close()
             activeCall = null
@@ -92,9 +96,6 @@ class MjpegStreamer(
         activeCall = null
     }
 
-    /**
-     * Extrem schlanker und fehlertoleranter JPEG-Frame-Parser (sucht nach 0xFFD8 und 0xFFD9).
-     */
     private fun readJpegFrame(stream: InputStream): ByteArray? {
         val buffer = ByteArrayOutputStream(32768)
         var prevByte = -1
@@ -105,7 +106,6 @@ class MjpegStreamer(
             if (currByte == -1) return null
 
             if (!inFrame) {
-                // Suche Start-Of-Image (SOI) Marker
                 if (prevByte == 0xFF && currByte == 0xD8) {
                     inFrame = true
                     buffer.write(prevByte)
@@ -113,7 +113,6 @@ class MjpegStreamer(
                 }
             } else {
                 buffer.write(currByte)
-                // Suche End-Of-Image (EOI) Marker
                 if (prevByte == 0xFF && currByte == 0xD9) {
                     return buffer.toByteArray()
                 }
