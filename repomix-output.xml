@@ -1,0 +1,3787 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+app/
+  src/
+    androidTest/
+      java/
+        com/
+          example/
+            app_blindenstock_add_on/
+              ExampleInstrumentedTest.kt
+    main/
+      assets/
+        yolo11n_objects.tflite
+        yolo11n_surface.tflite
+      java/
+        com/
+          example/
+            app_blindenstock_add_on/
+              data/
+                audio/
+                  speech_feedback_manager.kt
+                sensor/
+                  UserMotion.kt
+                video/
+                  LocalCameraSource.kt
+                  MjpegStreamer.kt
+                  VideoSource.kt
+                yolov11n_gpu/
+                  YoloDetector.kt
+              domain/
+                model/
+                  Detection.kt
+                synthesizer/
+                  guidance.kt
+              framework/
+                activity/
+                  MainActivity.kt
+                system_services/
+                  AppForegroundService.kt
+                ui/
+                  theme/
+                    Color.kt
+                    Theme.kt
+                    Type.kt
+                  CameraScreen.kt
+                  StartScreen.kt
+                viewmodel/
+                  MainViewModel.kt
+      keepRules/
+        rules.keep
+      res/
+        drawable/
+          ic_launcher_background.xml
+          ic_launcher_foreground.xml
+        mipmap-anydpi/
+          ic_launcher_round.xml
+          ic_launcher.xml
+        mipmap-hdpi/
+          ic_launcher_round.webp
+          ic_launcher.webp
+        mipmap-mdpi/
+          ic_launcher_round.webp
+          ic_launcher.webp
+        mipmap-xhdpi/
+          ic_launcher_round.webp
+          ic_launcher.webp
+        mipmap-xxhdpi/
+          ic_launcher_round.webp
+          ic_launcher.webp
+        mipmap-xxxhdpi/
+          ic_launcher_round.webp
+          ic_launcher.webp
+        values/
+          colors.xml
+          strings.xml
+          themes.xml
+        xml/
+          backup_rules.xml
+          data_extraction_rules.xml
+      AndroidManifest.xml
+    test/
+      java/
+        com/
+          example/
+            app_blindenstock_add_on/
+              ExampleUnitTest.kt
+  .gitignore
+  build.gradle.kts
+gradle/
+  wrapper/
+    gradle-wrapper.jar
+    gradle-wrapper.properties
+  gradle-daemon-jvm.properties
+  libs.versions.toml
+.gitignore
+build.gradle.kts
+gradle.properties
+gradlew
+gradlew.bat
+index.html
+kimodeltest.py
+settings.gradle.kts
+yolov8n.onnx
+yolov8n.pt
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="app/src/androidTest/java/com/example/app_blindenstock_add_on/ExampleInstrumentedTest.kt">
+package com.example.app_blindenstock_add_on
+
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.ext.junit.runners.AndroidJUnit4
+
+import org.junit.Test
+import org.junit.runner.RunWith
+
+import org.junit.Assert.*
+
+/**
+ * Instrumented test, which will execute on an Android device.
+ *
+ * See [testing documentation](http://d.android.com/tools/testing).
+ */
+@RunWith(AndroidJUnit4::class)
+class ExampleInstrumentedTest {
+    @Test
+    fun useAppContext() {
+        // Context of the app under test.
+        val appContext = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals("com.example.app_blindenstock_add_on", appContext.packageName)
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/audio/speech_feedback_manager.kt">
+package com.example.app_blindenstock_add_on.data.audio
+
+import android.content.Context
+import android.media.AudioAttributes
+import android.speech.tts.TextToSpeech
+import android.util.Log
+import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer.GuidanceOutput
+import java.util.Locale
+
+class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
+
+    private var tts: TextToSpeech? = TextToSpeech(context, this)
+    private var isInitialized = false
+
+    private var lastSpokenPhrase = ""
+    private var lastSpokenTime = 0L
+    private var lastSpokenPriority = 1
+
+    // Entprellung gegen Frame-Dropouts
+    private var consecutiveClearFrames = 0
+    private val requiredClearFrames = 8
+
+    private val emergencyCooldownMs = 1200L
+    private val persistentWarningRepeatMs = 3500L // Wiederholt aktive Warnung alle 3.5s
+    private val clearHeartbeatMs = 8000L
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.let { engine ->
+                val result = engine.setLanguage(Locale.US)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    engine.language = Locale.ENGLISH
+                }
+                engine.setSpeechRate(1.20f)
+
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                engine.setAudioAttributes(audioAttributes)
+
+                isInitialized = true
+                Log.d("SpeechFeedbackManager", "TTS ready on Media Channel.")
+            }
+        } else {
+            Log.e("SpeechFeedbackManager", "TTS initialization failed: $status")
+        }
+    }
+
+    fun processGuidance(guidance: GuidanceOutput): Boolean {
+        if (!isInitialized) return false
+
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastSpokenTime
+
+        if (guidance.priorityLevel == 1) {
+            consecutiveClearFrames++
+        } else {
+            consecutiveClearFrames = 0
+        }
+
+        // =========================================================================
+        // REAKTION 1: KONTROLLIERTES "CLEAR"
+        // =========================================================================
+        val isHazardClearing = (guidance.priorityLevel == 1) && (lastSpokenPriority >= 2)
+
+        if (isHazardClearing) {
+            val minPlayTimeMs = if (lastSpokenPriority == 3) 700L else 1400L
+            val isAudioFinished = (tts?.isSpeaking != true) && (elapsed >= minPlayTimeMs)
+            val isStableClear = consecutiveClearFrames >= requiredClearFrames
+
+            if (isAudioFinished && isStableClear) {
+                lastSpokenPhrase = "Clear"
+                lastSpokenTime = now
+                lastSpokenPriority = 1
+                consecutiveClearFrames = 0
+
+                tts?.speak("Clear", TextToSpeech.QUEUE_FLUSH, null, "CLEAR_CONFIRMED")
+                return true
+            }
+            return false
+        }
+
+        // =========================================================================
+        // REAKTION 2: NOTFALL ("STOP!")
+        // =========================================================================
+        val isEmergencyEscalation = guidance.priorityLevel == 3 && lastSpokenPriority < 3
+
+        if (tts?.isSpeaking == true && !isEmergencyEscalation) {
+            return false
+        }
+
+        // Richtungswechsel erkennen
+        val isDirectionChange = (guidance.phrase.contains("step left") && lastSpokenPhrase.contains("step right")) ||
+                (guidance.phrase.contains("step right") && lastSpokenPhrase.contains("step left"))
+
+        val isSameOrSimilar = isSimilarOrSame(guidance.phrase, lastSpokenPhrase)
+
+        // Mindestabstand berechnen
+        val requiredInterval = when {
+            isEmergencyEscalation -> emergencyCooldownMs
+            isDirectionChange -> 1400L // Richtungsanpassung sofort nach Ausreden der alten Phrase
+            isSameOrSimilar -> persistentWarningRepeatMs // Gleiche Warnung alle 3.5s wiederholen
+            guidance.priorityLevel == 2 -> 2200L
+            else -> clearHeartbeatMs
+        }
+
+        if (elapsed < requiredInterval && !isEmergencyEscalation) {
+            return false
+        }
+
+        lastSpokenPhrase = guidance.phrase
+        lastSpokenTime = now
+        lastSpokenPriority = guidance.priorityLevel
+
+        tts?.speak(guidance.phrase, TextToSpeech.QUEUE_FLUSH, null, "GUIDANCE_UTTERANCE")
+        Log.d("SpeechFeedbackManager", "Spoken: ${guidance.phrase}")
+        return true
+    }
+
+    private fun isSimilarOrSame(newPhrase: String, oldPhrase: String): Boolean {
+        if (oldPhrase.isBlank()) return false
+        if (newPhrase.equals(oldPhrase, ignoreCase = true)) return true
+
+        val cleanNew = newPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
+        val cleanOld = oldPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
+
+        // Gegensätzliche Richtungen dürfen NIEMALS als ähnlich gelten
+        val newHasLeft = cleanNew.contains("step left")
+        val oldHasLeft = cleanOld.contains("step left")
+        val newHasRight = cleanNew.contains("step right")
+        val oldHasRight = cleanOld.contains("step right")
+        if ((newHasLeft && oldHasRight) || (newHasRight && oldHasLeft)) {
+            return false
+        }
+
+        val wordsNew = cleanNew.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
+        val wordsOld = cleanOld.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
+
+        if (wordsNew.isEmpty() || wordsOld.isEmpty()) return false
+
+        val intersection = wordsNew.intersect(wordsOld).size
+        val union = wordsNew.union(wordsOld).size
+
+        return (intersection.toFloat() / union.toFloat()) >= 0.75f
+    }
+
+    fun shutdown() {
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        isInitialized = false
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/sensor/UserMotion.kt">
+package com.example.app_blindenstock_add_on.data.sensor
+
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import kotlin.math.sqrt
+
+class UserMotionTracker(context: Context) : SensorEventListener {
+
+    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val stepDetector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+    private val linearAcc = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+
+    @Volatile
+    var isUserWalking: Boolean = false
+        private set
+
+    private var lastMovementTime = 0L
+    private val movementTimeoutMs = 1500L // 1.5s nach dem letzten Schritt gilt der Nutzer als stehend
+
+    fun start() {
+        try {
+            stepDetector?.let {
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            }
+        } catch (e: SecurityException) {
+            android.util.Log.w("UserMotionTracker", "Step Detector permission missing, fallback to linear acceleration.")
+        }
+
+        linearAcc?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+        }
+    }
+
+    fun stop() {
+        sensorManager.unregisterListener(this)
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        val now = System.currentTimeMillis()
+        if (event == null) return
+
+        when (event.sensor.type) {
+            Sensor.TYPE_STEP_DETECTOR -> {
+                isUserWalking = true
+                lastMovementTime = now
+            }
+            Sensor.TYPE_LINEAR_ACCELERATION -> {
+                val x = event.values[0]
+                val y = event.values[1]
+                val z = event.values[2]
+                val magnitude = sqrt((x * x + y * y + z * z).toDouble()).toFloat()
+
+                // Beschleunigungsschwelle für normale Gehbewegung
+                if (magnitude > 1.2f) {
+                    isUserWalking = true
+                    lastMovementTime = now
+                }
+            }
+        }
+
+        // Automatisch auf "stehend" setzen, wenn Timeout abgelaufen
+        if (now - lastMovementTime > movementTimeoutMs) {
+            isUserWalking = false
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/LocalCameraSource.kt">
+package com.example.app_blindenstock_add_on.data.video
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.util.Log
+import androidx.annotation.OptIn
+import androidx.camera.core.*
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import java.util.concurrent.Executors
+
+class LocalCameraSource(
+    private val context: Context,
+    private val lifecycleOwner: LifecycleOwner
+) : VideoSource {
+
+    private val cameraExecutor = Executors.newSingleThreadExecutor()
+    private var cameraProvider: ProcessCameraProvider? = null
+
+    @OptIn(ExperimentalGetImage::class)
+    override fun getFrames(): Flow<Bitmap> = callbackFlow {
+        Log.d("LocalCameraSource", "Starting frame flow")
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+
+        cameraProviderFuture.addListener({
+            try {
+                cameraProvider = cameraProviderFuture.get()
+
+                val resolutionSelector = ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            android.util.Size(320, 240),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                        )
+                    )
+                    .build()
+
+                val imageAnalysis = ImageAnalysis.Builder()
+                    .setResolutionSelector(resolutionSelector)
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // Direkt RGBA!
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+
+                imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                    val bitmap = imageProxy.toBitmap()
+                    val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+                    val rotatedBitmap = if (rotationDegrees != 0) {
+                        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                    } else {
+                        bitmap
+                    }
+
+                    trySend(rotatedBitmap)
+                    imageProxy.close()
+                }
+
+                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                cameraProvider?.unbindAll()
+                cameraProvider?.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    imageAnalysis
+                )
+            } catch (e: Exception) {
+                Log.e("LocalCameraSource", "Initialization failed", e)
+                close(e)
+            }
+        }, ContextCompat.getMainExecutor(context))
+
+        awaitClose {
+            stop()
+        }
+    }
+
+    override fun stop() {
+        cameraExecutor.shutdown()
+        ContextCompat.getMainExecutor(context).execute {
+            try {
+                cameraProvider?.unbindAll()
+            } catch (e: Exception) {
+                Log.e("LocalCameraSource", "Unbind failed", e)
+            }
+        }
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/MjpegStreamer.kt">
+package com.example.app_blindenstock_add_on.data.video
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import okhttp3.Call
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.util.concurrent.TimeUnit
+
+class MjpegStreamer(
+    private val client: OkHttpClient,
+    private val url: String
+) : VideoSource {
+
+    @Volatile
+    private var activeCall: Call? = null
+
+    // Optimierter Client für Endlos-Streams: Connect-Timeout kurz, Read-Timeout UNENDLICH (0)
+    private val streamClient = client.newBuilder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS) // Verhindert jegliche Timeout-Abbrüche im Stream!
+        .retryOnConnectionFailure(true)
+        .build()
+
+    // 640x480 direkt beim Dekodieren halbieren (spart enorm viel Rechenzeit und RAM)
+    private val decodeOptions = BitmapFactory.Options().apply {
+        inSampleSize = 2
+        inPreferredConfig = Bitmap.Config.RGB_565
+    }
+
+    override fun getFrames(): Flow<Bitmap> = flow {
+        val request = Request.Builder()
+            .url(url)
+            .header("Cache-Control", "no-cache")
+            .header("Connection", "keep-alive")
+            .build()
+
+        val call = streamClient.newCall(request)
+        activeCall = call
+
+        val response = try {
+            call.execute()
+        } catch (e: Exception) {
+            Log.e("MjpegStreamer", "Verbindung zu $url fehlgeschlagen: ${e.message}")
+            return@flow
+        }
+
+        if (!response.isSuccessful) {
+            Log.e("MjpegStreamer", "HTTP-Fehler: ${response.code}")
+            response.close()
+            return@flow
+        }
+
+        val body = response.body
+        if (body == null) {
+            response.close()
+            return@flow
+        }
+
+        val bufferedInput = BufferedInputStream(body.byteStream(), 65536)
+
+        try {
+            while (true) {
+                val frameBytes = readJpegFrame(bufferedInput) ?: break
+                val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
+                if (bitmap != null) {
+                    emit(bitmap)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("MjpegStreamer", "Stream-Verbindung getrennt: {e.message}")
+        } finally {
+            response.close()
+            activeCall = null
+        }
+    }.flowOn(Dispatchers.IO)
+
+    override fun stop() {
+        try {
+            activeCall?.cancel()
+        } catch (e: Exception) {
+            Log.w("MjpegStreamer", "Fehler beim Stoppen: ${e.message}")
+        }
+        activeCall = null
+    }
+
+    /**
+     * Extrem schlanker und fehlertoleranter JPEG-Frame-Parser (sucht nach 0xFFD8 und 0xFFD9).
+     */
+    private fun readJpegFrame(stream: InputStream): ByteArray? {
+        val buffer = ByteArrayOutputStream(32768)
+        var prevByte = -1
+        var inFrame = false
+
+        while (true) {
+            val currByte = stream.read()
+            if (currByte == -1) return null
+
+            if (!inFrame) {
+                // Suche Start-Of-Image (SOI) Marker
+                if (prevByte == 0xFF && currByte == 0xD8) {
+                    inFrame = true
+                    buffer.write(prevByte)
+                    buffer.write(currByte)
+                }
+            } else {
+                buffer.write(currByte)
+                // Suche End-Of-Image (EOI) Marker
+                if (prevByte == 0xFF && currByte == 0xD9) {
+                    return buffer.toByteArray()
+                }
+            }
+            prevByte = currByte
+        }
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/VideoSource.kt">
+package com.example.app_blindenstock_add_on.data.video
+
+import android.graphics.Bitmap
+import kotlinx.coroutines.flow.Flow
+
+interface VideoSource {
+    fun getFrames(): Flow<Bitmap>
+    fun stop()
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/yolov11n_gpu/YoloDetector.kt">
+package com.example.app_blindenstock_add_on.data.yolov11n_gpu
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.util.Log
+import com.example.app_blindenstock_add_on.domain.model.*
+import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.CompatibilityList
+import org.tensorflow.lite.gpu.GpuDelegate
+import java.io.FileInputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.channels.FileChannel
+import kotlin.math.sqrt
+
+class YoloDetector(private val context: Context) {
+
+    private var objectInterpreter: Interpreter? = null
+    private var surfaceInterpreter: Interpreter? = null
+    private var objectGpuDelegate: GpuDelegate? = null
+    private var surfaceGpuDelegate: GpuDelegate? = null
+
+    // Zero-Allocation Resampling: Wiederverwendbare Objekte im RAM
+    private val scaledBitmap = Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888)
+    private val scaleCanvas = Canvas(scaledBitmap)
+    private val scaleMatrix = Matrix()
+    private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    private val inputBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
+        order(ByteOrder.nativeOrder())
+    }
+    private val pixelArray = IntArray(320 * 320)
+
+    private val outputObjects = Array(1) { Array(84) { FloatArray(2100) } }
+    private val outputSurface0 = Array(1) { Array(40) { FloatArray(2100) } }
+    private val outputSurface1 = Array(1) { Array(32) { Array(80) { FloatArray(80) } } }
+    private var surfaceHasDualOutputs = false
+
+    val surfaceLabels = listOf("sidewalk", "roadway", "path", "stairs")
+
+    val objectLabels = listOf(
+        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
+        "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+        "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
+        "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+        "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
+        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
+        "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+        "hair drier", "toothbrush"
+    )
+
+    private val relevantObstacles = setOf(
+        "person", "bicycle", "car", "motorcycle", "bus", "truck", "dog",
+        "bench", "chair", "fire hydrant", "stop sign", "traffic light", "potted plant",
+        "parking meter", "suitcase", "backpack"
+    )
+
+    private val classCounters = mutableMapOf<String, Int>()
+    private var trackedObjects = mutableListOf<TrackedState>()
+    private val maxDistanceThreshold = 0.20f
+    private val objectGracePeriodMs = 400L
+
+    private var frameSequence: Long = 0
+    private var cachedSurfaces: List<Detection> = emptyList()
+
+    var lastInferenceTime: Long = 0
+        private set
+
+    data class TrackedState(
+        val trackId: Int,
+        var detection: Detection,
+        var lastSeen: Long,
+        var prevX: Float,
+        var prevY: Float,
+        var prevFloorY: Float,
+        var prevArea: Float
+    )
+
+    init {
+        loadModels()
+    }
+
+    private fun loadModels() {
+        val compatList = CompatibilityList()
+
+        try {
+            val optA = Interpreter.Options().apply {
+                setNumThreads(4)
+                if (compatList.isDelegateSupportedOnThisDevice) {
+                    val delegateOptions = compatList.bestOptionsForThisDevice.apply {
+                        setInferencePreference(GpuDelegate.Options.INFERENCE_PREFERENCE_SUSTAINED_SPEED)
+                    }
+                    objectGpuDelegate = GpuDelegate(delegateOptions)
+                    addDelegate(objectGpuDelegate)
+                }
+            }
+            val bufA = loadModelFile(context, "yolo11n_objects.tflite")
+            objectInterpreter = Interpreter(bufA, optA)
+        } catch (e: Exception) {
+            Log.e("YoloDetector", "Error loading yolo11n_objects.tflite", e)
+        }
+
+        try {
+            val optB = Interpreter.Options().apply {
+                setNumThreads(4)
+                if (compatList.isDelegateSupportedOnThisDevice) {
+                    val delegateOptions = compatList.bestOptionsForThisDevice.apply {
+                        setInferencePreference(GpuDelegate.Options.INFERENCE_PREFERENCE_SUSTAINED_SPEED)
+                    }
+                    surfaceGpuDelegate = GpuDelegate(delegateOptions)
+                    addDelegate(surfaceGpuDelegate)
+                }
+            }
+            val bufB = loadModelFile(context, "yolo11n_surface.tflite")
+            surfaceInterpreter = Interpreter(bufB, optB)
+            surfaceHasDualOutputs = (surfaceInterpreter?.outputTensorCount ?: 0) > 1
+        } catch (e: Exception) {
+            Log.e("YoloDetector", "Error loading yolo11n_surface.tflite", e)
+        }
+    }
+
+    private fun loadModelFile(context: Context, modelPath: String): ByteBuffer {
+        val fd = context.assets.openFd(modelPath)
+        val channel = FileInputStream(fd.fileDescriptor).channel
+        return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
+    }
+
+    fun detect(bitmap: Bitmap, isUserWalking: Boolean = true): FrameAnalysisResult {
+        val startTime = System.currentTimeMillis()
+        frameSequence++
+
+        // Bild skalieren ohne neue Bitmap im Heap zu erzeugen
+        scaleMatrix.reset()
+        scaleMatrix.setScale(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
+        scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
+        preprocessNCHW(scaledBitmap)
+
+        val rawObjects = mutableListOf<Detection>()
+        objectInterpreter?.let { interp ->
+            inputBuffer.rewind()
+            interp.run(inputBuffer, outputObjects)
+            rawObjects.addAll(processObjectTensors(outputObjects[0]))
+        }
+
+        val rawSurfaces = if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
+            val freshSurfaces = mutableListOf<Detection>()
+            surfaceInterpreter?.let { interp ->
+                inputBuffer.rewind()
+                if (surfaceHasDualOutputs) {
+                    val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
+                    interp.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+                } else {
+                    interp.run(inputBuffer, outputSurface0)
+                }
+                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0]))
+            }
+            cachedSurfaces = freshSurfaces
+            freshSurfaces
+        } else {
+            cachedSurfaces
+        }
+
+        val filteredObjects = applyNMS(rawObjects, 0.45f)
+        val filteredSurfaces = applyNMS(rawSurfaces, 0.45f)
+
+        val combinedCandidates = filteredSurfaces + filteredObjects
+        val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking)
+
+        val topSurface = stabilizedDetections
+            .filter { it.className in listOf("sidewalk", "path", "roadway") }
+            .maxByOrNull { it.score }
+
+        lastInferenceTime = System.currentTimeMillis() - startTime
+
+        return FrameAnalysisResult(
+            detections = stabilizedDetections,
+            corridor = CorridorAnalysis(),
+            primarySurface = topSurface?.className ?: "unknown",
+            surfaceConfidence = topSurface?.score ?: 0f
+        )
+    }
+
+    private fun preprocessNCHW(bitmap: Bitmap) {
+        inputBuffer.rewind()
+        bitmap.getPixels(pixelArray, 0, 320, 0, 0, 320, 320)
+        val totalPixels = 320 * 320
+
+        for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 16) and 0xFF) * 0.003921569f)
+        for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 8) and 0xFF) * 0.003921569f)
+        for (i in 0 until totalPixels) inputBuffer.putFloat((pixelArray[i] and 0xFF) * 0.003921569f)
+    }
+
+    private fun processObjectTensors(data: Array<FloatArray>): List<Detection> {
+        val candidates = mutableListOf<Detection>()
+        val confThreshold = 0.28f
+
+        for (c in 0 until 2100) {
+            var maxScore = 0f
+            var classId = -1
+
+            for (r in 4 until 84) {
+                val score = data[r][c]
+                if (score > maxScore) {
+                    maxScore = score
+                    classId = r - 4
+                }
+            }
+
+            if (maxScore > confThreshold && classId in objectLabels.indices) {
+                val label = objectLabels[classId]
+                if (label !in relevantObstacles) continue
+
+                val isNormalized = data[0][c] <= 1.0f && data[2][c] <= 1.0f
+                val scale = if (isNormalized) 1.0f else 320.0f
+
+                val cx = data[0][c] / scale
+                val cy = data[1][c] / scale
+                val w = data[2][c] / scale
+                val h = data[3][c] / scale
+
+                candidates.add(
+                    Detection(
+                        boundingBox = BoundingBox(
+                            x = (cx - w / 2f).coerceIn(0f, 1f),
+                            y = (cy - h / 2f).coerceIn(0f, 1f),
+                            width = w.coerceIn(0f, 1f),
+                            height = h.coerceIn(0f, 1f)
+                        ),
+                        classId = classId + 100,
+                        className = label,
+                        score = maxScore
+                    )
+                )
+            }
+        }
+        return candidates
+    }
+
+    private fun processSurfaceTensors(data: Array<FloatArray>): List<Detection> {
+        val candidates = mutableListOf<Detection>()
+        val confThreshold = 0.38f
+
+        for (c in 0 until 2100) {
+            var maxScore = 0f
+            var classId = -1
+
+            for (r in 4 until 8) {
+                val score = data[r][c]
+                if (score > maxScore) {
+                    maxScore = score
+                    classId = r - 4
+                }
+            }
+
+            if (maxScore > confThreshold && classId in surfaceLabels.indices) {
+                val isNormalized = data[0][c] <= 1.0f && data[2][c] <= 1.0f
+                val scale = if (isNormalized) 1.0f else 320.0f
+
+                val cx = data[0][c] / scale
+                val cy = data[1][c] / scale
+                val w = data[2][c] / scale
+                val h = data[3][c] / scale
+
+                candidates.add(
+                    Detection(
+                        boundingBox = BoundingBox(
+                            x = (cx - w / 2f).coerceIn(0f, 1f),
+                            y = (cy - h / 2f).coerceIn(0f, 1f),
+                            width = w.coerceIn(0f, 1f),
+                            height = h.coerceIn(0f, 1f)
+                        ),
+                        classId = classId,
+                        className = surfaceLabels[classId],
+                        score = maxScore
+                    )
+                )
+            }
+        }
+        return candidates
+    }
+
+    private fun updateTracking(currentDetections: List<Detection>, isUserWalking: Boolean): List<Detection> {
+        val now = System.currentTimeMillis()
+        val matchedCurrent = BooleanArray(currentDetections.size)
+        val result = mutableListOf<Detection>()
+
+        for (tracked in trackedObjects) {
+            val tCenter = getCenter(tracked.detection.boundingBox)
+            var bestIdx = -1
+            var minDistance = Float.MAX_VALUE
+
+            for (i in currentDetections.indices) {
+                if (matchedCurrent[i]) continue
+                if (currentDetections[i].className != tracked.detection.className) continue
+
+                val cCenter = getCenter(currentDetections[i].boundingBox)
+                val dist = distance(tCenter, cCenter)
+                if (dist < minDistance && dist < maxDistanceThreshold) {
+                    minDistance = dist
+                    bestIdx = i
+                }
+            }
+
+            if (bestIdx != -1) {
+                matchedCurrent[bestIdx] = true
+                val rawDet = currentDetections[bestIdx]
+                val b = rawDet.boundingBox
+                val cx = b.x + b.width / 2f
+                val cy = b.y + b.height / 2f
+                val floorY = (b.y + b.height).coerceIn(0f, 1f)
+                val area = b.width * b.height
+
+                val dt = (now - tracked.lastSeen) / 1000.0f
+                val dFloorY = if (dt > 0) (floorY - tracked.prevFloorY) / dt else 0f
+                val dArea = area - tracked.prevArea
+
+                val trend = when {
+                    dArea > 0.015f -> "growing"
+                    dArea < -0.015f -> "shrinking"
+                    else -> "constant"
+                }
+
+                val motion = when {
+                    isUserWalking && dFloorY > 0.04f -> "user_approaching"
+                    dFloorY > 0.08f -> "approaching_fast"
+                    else -> "stationary"
+                }
+
+                val ttcSec = if (dFloorY > 0.02f && floorY < 0.98f) {
+                    ((1.0f - floorY) / dFloorY).coerceIn(0.1f, 10.0f)
+                } else -1.0f
+
+                val clockPos = when {
+                    cx < 0.35f -> "10_o_clock"
+                    cx < 0.45f -> "11_o_clock"
+                    cx <= 0.55f -> "12_o_clock"
+                    cx <= 0.65f -> "1_o_clock"
+                    else -> "2_o_clock"
+                }
+
+                val priority = when {
+                    floorY > 0.80f || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
+                    trend == "growing" || floorY > 0.60f -> "HIGH"
+                    floorY > 0.40f -> "MEDIUM"
+                    else -> "LOW"
+                }
+
+                val updatedDet = rawDet.copy(
+                    classId = tracked.trackId,
+                    motion = motion,
+                    trend = trend,
+                    priority = priority,
+                    clockPos = clockPos,
+                    ttcSec = ttcSec
+                )
+
+                tracked.detection = updatedDet
+                tracked.lastSeen = now
+                tracked.prevX = cx
+                tracked.prevY = cy
+                tracked.prevFloorY = floorY
+                tracked.prevArea = area
+
+                result.add(updatedDet)
+            }
+        }
+
+        for (i in currentDetections.indices) {
+            if (!matchedCurrent[i]) {
+                val rawDet = currentDetections[i]
+                val nextId = (classCounters[rawDet.className] ?: 0) + 1
+                classCounters[rawDet.className] = nextId
+
+                val b = rawDet.boundingBox
+                val cx = b.x + b.width / 2f
+                val floorY = b.y + b.height
+
+                val clockPos = when {
+                    cx < 0.35f -> "10_o_clock"
+                    cx < 0.45f -> "11_o_clock"
+                    cx <= 0.55f -> "12_o_clock"
+                    cx <= 0.65f -> "1_o_clock"
+                    else -> "2_o_clock"
+                }
+
+                val priority = when {
+                    floorY > 0.80f -> "CRITICAL"
+                    floorY > 0.60f -> "HIGH"
+                    else -> "LOW"
+                }
+
+                val newDet = rawDet.copy(
+                    classId = nextId,
+                    clockPos = clockPos,
+                    priority = priority
+                )
+
+                trackedObjects.add(
+                    TrackedState(
+                        trackId = nextId,
+                        detection = newDet,
+                        lastSeen = now,
+                        prevX = cx,
+                        prevY = b.y + b.height / 2f,
+                        prevFloorY = floorY,
+                        prevArea = b.width * b.height
+                    )
+                )
+                result.add(newDet)
+            }
+        }
+
+        trackedObjects.removeAll { now - it.lastSeen > objectGracePeriodMs }
+        return result
+    }
+
+    private fun getCenter(b: BoundingBox) = Pair(b.x + b.width / 2f, b.y + b.height / 2f)
+
+    private fun distance(p1: Pair<Float, Float>, p2: Pair<Float, Float>): Float {
+        val dx = p1.first - p2.first
+        val dy = p1.second - p2.second
+        return sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+    }
+
+    private fun applyNMS(detections: List<Detection>, threshold: Float): List<Detection> {
+        val sorted = detections.sortedByDescending { it.score }
+        val selected = mutableListOf<Detection>()
+        val active = BooleanArray(sorted.size) { true }
+
+        for (i in sorted.indices) {
+            if (active[i]) {
+                selected.add(sorted[i])
+                for (j in i + 1 until sorted.size) {
+                    if (active[j]) {
+                        if (calculateIoU(sorted[i].boundingBox, sorted[j].boundingBox) > threshold) {
+                            active[j] = false
+                        }
+                    }
+                }
+            }
+        }
+        return selected
+    }
+
+    private fun calculateIoU(box1: BoundingBox, box2: BoundingBox): Float {
+        val x1 = maxOf(box1.x, box2.x)
+        val y1 = maxOf(box1.y, box2.y)
+        val x2 = minOf(box1.x + box1.width, box2.x + box2.width)
+        val y2 = minOf(box1.y + box1.height, box2.y + box2.height)
+
+        val intersection = maxOf(0f, x2 - x1) * maxOf(0f, y2 - y1)
+        val union = (box1.width * box1.height) + (box2.width * box2.height) - intersection
+        return if (union > 0f) intersection / union else 0f
+    }
+
+    fun close() {
+        objectInterpreter?.close()
+        surfaceInterpreter?.close()
+        objectGpuDelegate?.close()
+        surfaceGpuDelegate?.close()
+        scaledBitmap.recycle()
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/domain/model/Detection.kt">
+package com.example.app_blindenstock_add_on.domain.model
+
+data class Detection(
+    val boundingBox: BoundingBox,
+    val classId: Int,
+    val className: String,
+    val score: Float,
+    val motion: String = "stationary",
+    val trend: String = "constant",
+    val priority: String = "LOW",
+    val clockPos: String = "12_o_clock",
+    val ttcSec: Float = -1.0f
+) {
+    val entityId: String get() = "${className}_$classId"
+}
+
+data class BoundingBox(
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val height: Float
+)
+
+data class SectorInfo(
+    val status: String = "clear",
+    val blocker: String? = null,
+    val clock: String? = null,
+    val ttcSec: Float? = null,
+    val priority: String? = null
+)
+
+data class CorridorAnalysis(
+    val left: SectorInfo = SectorInfo(),
+    val center: SectorInfo = SectorInfo(),
+    val right: SectorInfo = SectorInfo(),
+    val criticalBlocker: Detection? = null,
+    val guidance: String = "proceed_straight"
+)
+
+data class FrameAnalysisResult(
+    val detections: List<Detection>,
+    val corridor: CorridorAnalysis,
+    val primarySurface: String,
+    val surfaceConfidence: Float
+)
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/domain/synthesizer/guidance.kt">
+package com.example.app_blindenstock_add_on.domain.synthesizer
+
+import com.example.app_blindenstock_add_on.domain.model.FrameAnalysisResult
+
+object GuidanceSynthesizer {
+
+    data class GuidanceOutput(
+        val phrase: String,
+        val isEmergency: Boolean,
+        val priorityLevel: Int // 3 = Stop, 2 = Warning/Evasion, 1 = Clear
+    )
+
+    // Direction-Latch: Verhindert nervöses Hin- und Herspringen
+    private var lockedEvadeSide: String = "step left"
+    private var lastEvadeLockTime: Long = 0L
+    private val evadeLockDurationMs = 3500L
+
+    // Hysterese gegen Frame-Flicker
+    private var clearFrameCounter = 0
+    private val requiredClearFrames = 6
+
+    fun synthesize(
+        result: FrameAnalysisResult,
+        isUserWalking: Boolean,
+        allowRoadwayAlerts: Boolean = false,
+        isEsp32: Boolean = false
+    ): GuidanceOutput {
+        val now = System.currentTimeMillis()
+        val detections = result.detections
+        val hasStairsVisible = detections.any { it.className == "stairs" }
+
+        // Schwellenwerte: Für ESP32 auf 0.62f angehoben (warnt erst ab Screenshot 2)
+        val stopFloorThreshold = if (isEsp32) 0.84f else 0.80f
+        val personFloorMin = if (isEsp32) 0.62f else 0.48f
+        val objectFloorMin = if (isEsp32) 0.64f else 0.50f
+        val stairsFloorMin = if (isEsp32) 0.62f else 0.50f
+
+        // =========================================================================
+        // STUFE 2: NOTFALL-STOPP (Nahdistanz, Rumpffüllung oder Kollisions-TTC)
+        // =========================================================================
+        val imminentThreat = detections.firstOrNull { det ->
+            if (det.className in listOf("sidewalk", "path")) return@firstOrNull false
+            if (!allowRoadwayAlerts && det.className == "roadway") return@firstOrNull false
+
+            val boxLeft = det.boundingBox.x
+            val boxRight = det.boundingBox.x + det.boundingBox.width
+            val floorY = det.boundingBox.y + det.boundingBox.height
+            val area = det.boundingBox.width * det.boundingBox.height
+
+            val inCorridor = (boxLeft < 0.68f && boxRight > 0.32f)
+
+            val isDistanceCritical = floorY > stopFloorThreshold
+            val isTorsoImminent = (det.className == "person") && (area > 0.15f || det.boundingBox.width > 0.28f) && (floorY > 0.55f)
+            val isTtcCritical = det.ttcSec in 0.2f..1.3f && det.trend == "growing"
+
+            inCorridor && (isDistanceCritical || isTorsoImminent || isTtcCritical)
+        }
+
+        if (imminentThreat != null) {
+            clearFrameCounter = 0
+            return GuidanceOutput("Stop!", isEmergency = true, priorityLevel = 3)
+        }
+
+        // =========================================================================
+        // BODENGEFAHREN (Treppen & Fahrbahnkante)
+        // =========================================================================
+        val stairsHazard = detections.firstOrNull { det ->
+            val boxLeft = det.boundingBox.x
+            val boxRight = det.boundingBox.x + det.boundingBox.width
+            val floorY = det.boundingBox.y + det.boundingBox.height
+            det.className == "stairs" && (boxLeft < 0.68f && boxRight > 0.32f) && floorY > stairsFloorMin
+        }
+
+        if (stairsHazard != null && isUserWalking) {
+            clearFrameCounter = 0
+            return GuidanceOutput("Caution, stairs ahead.", isEmergency = false, priorityLevel = 2)
+        }
+
+        if (allowRoadwayAlerts) {
+            val isRoadwayReliable = !hasStairsVisible &&
+                    result.primarySurface == "roadway" &&
+                    result.surfaceConfidence > 0.75f &&
+                    detections.none { it.className == "sidewalk" && it.score > 0.45f }
+
+            val roadwayGroundCheck = detections.firstOrNull { det ->
+                val floorY = det.boundingBox.y + det.boundingBox.height
+                val roadwayMin = if (isEsp32) 0.86f else 0.84f
+                det.className == "roadway" && det.boundingBox.y > 0.25f && floorY > roadwayMin
+            }
+
+            if ((isRoadwayReliable || roadwayGroundCheck != null) && isUserWalking) {
+                clearFrameCounter = 0
+                return GuidanceOutput("Warning, roadway surface.", isEmergency = false, priorityLevel = 2)
+            }
+        }
+
+        // =========================================================================
+        // STUFE 1: PERSONEN IM GEHKORRIDOR (Warnung ab 0.62f)
+        // =========================================================================
+        val corridorPerson = detections.firstOrNull { det ->
+            if (det.className != "person") return@firstOrNull false
+            val boxLeft = det.boundingBox.x
+            val boxRight = det.boundingBox.x + det.boundingBox.width
+            val floorY = det.boundingBox.y + det.boundingBox.height
+
+            val inCorridor = (boxLeft < 0.68f && boxRight > 0.32f)
+            inCorridor && (floorY in personFloorMin..stopFloorThreshold)
+        }
+
+        if (corridorPerson != null) {
+            clearFrameCounter = 0
+
+            val isLockExpired = (now - lastEvadeLockTime) > evadeLockDurationMs
+            if (isLockExpired) {
+                val pCx = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width / 2f
+                val flankThreshold = if (isEsp32) 0.68f else 0.58f
+
+                val hasObstacleLeft = detections.any {
+                    it != corridorPerson &&
+                            (allowRoadwayAlerts || it.className != "roadway") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) < 0.32f &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+                val hasObstacleRight = detections.any {
+                    it != corridorPerson &&
+                            (allowRoadwayAlerts || it.className != "roadway") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) > 0.68f &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+
+                lockedEvadeSide = when {
+                    !hasObstacleLeft && (hasObstacleRight || pCx >= 0.50f) -> "step left"
+                    !hasObstacleRight -> "step right"
+                    else -> "step left"
+                }
+                lastEvadeLockTime = now
+            }
+
+            return GuidanceOutput("Person ahead, $lockedEvadeSide.", isEmergency = false, priorityLevel = 2)
+        }
+
+        // =========================================================================
+        // STUFE 1: FAHRZEUGE & ANDERE HINDERNISSE
+        // =========================================================================
+        val vehicleHazard = detections.firstOrNull { det ->
+            val isVehicle = det.className in listOf("bicycle", "car", "motorcycle", "bus", "truck")
+            if (!isVehicle) return@firstOrNull false
+
+            val boxLeft = det.boundingBox.x
+            val boxRight = det.boundingBox.x + det.boundingBox.width
+            val floorY = det.boundingBox.y + det.boundingBox.height
+            val area = det.boundingBox.width * det.boundingBox.height
+
+            val inCorridor = (boxLeft < 0.68f && boxRight > 0.32f)
+            val inDistance = floorY in objectFloorMin..stopFloorThreshold || area > 0.10f
+
+            inCorridor && inDistance
+        }
+
+        if (vehicleHazard != null && isUserWalking) {
+            clearFrameCounter = 0
+            val vehicleName = formatSpecificObjectName(vehicleHazard.className)
+            return GuidanceOutput("$vehicleName ahead.", isEmergency = false, priorityLevel = 2)
+        }
+
+        val staticObstacle = detections.firstOrNull { det ->
+            val boxLeft = det.boundingBox.x
+            val boxRight = det.boundingBox.x + det.boundingBox.width
+            val floorY = det.boundingBox.y + det.boundingBox.height
+            val isRoadwayIgnored = !allowRoadwayAlerts && det.className == "roadway"
+
+            !isRoadwayIgnored &&
+                    det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck") &&
+                    (boxLeft < 0.68f && boxRight > 0.32f) && floorY in objectFloorMin..stopFloorThreshold
+        }
+
+        if (staticObstacle != null && isUserWalking) {
+            clearFrameCounter = 0
+            val obstacleName = formatSpecificObjectName(staticObstacle.className)
+            return GuidanceOutput("$obstacleName ahead.", isEmergency = false, priorityLevel = 2)
+        }
+
+        // =========================================================================
+        // ENTWANNUNG
+        // =========================================================================
+        val hasCloseProximityHazard = detections.any {
+            it.className !in listOf("sidewalk", "path") &&
+                    (it.boundingBox.width * it.boundingBox.height > 0.12f) &&
+                    (it.boundingBox.y + it.boundingBox.height > 0.60f)
+        }
+
+        if (!hasCloseProximityHazard) {
+            clearFrameCounter++
+        } else {
+            clearFrameCounter = 0
+        }
+
+        if (clearFrameCounter >= requiredClearFrames) {
+            lastEvadeLockTime = 0L // Lock für die nächste Begegnung zurücksetzen
+            return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
+        }
+
+        return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
+    }
+
+    private fun formatSpecificObjectName(rawClass: String): String = when (rawClass.lowercase()) {
+        "bench" -> "Bench"
+        "chair", "couch" -> "Chair"
+        "fire hydrant" -> "Hydrant"
+        "stop sign" -> "Sign"
+        "traffic light" -> "Traffic light"
+        "potted plant" -> "Plant"
+        "dog" -> "Dog"
+        "bicycle" -> "Bicycle"
+        "car" -> "Car"
+        "motorcycle" -> "Motorcycle"
+        "bus" -> "Bus"
+        "truck" -> "Truck"
+        "parking meter" -> "Pole"
+        "suitcase", "backpack" -> "Obstacle"
+        else -> "Obstacle"
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/activity/MainActivity.kt">
+package com.example.app_blindenstock_add_on.framework.activity
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
+import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
+import com.example.app_blindenstock_add_on.framework.system_services.AppForegroundService
+import com.example.app_blindenstock_add_on.framework.ui.CameraScreen
+import com.example.app_blindenstock_add_on.framework.ui.StartScreen
+import com.example.app_blindenstock_add_on.framework.ui.theme.App_BlindenstockaddonTheme
+import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
+import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
+
+class MainActivity : ComponentActivity() {
+
+    private lateinit var viewModel: MainViewModel
+
+    private val requiredPermissions = arrayOf(
+        Manifest.permission.RECORD_AUDIO,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.POST_NOTIFICATIONS,
+        Manifest.permission.NEARBY_WIFI_DEVICES,
+        Manifest.permission.CAMERA,
+        Manifest.permission.ACTIVITY_RECOGNITION
+    )
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            checkBatteryOptimization()
+        } else {
+            permissions.filter { !it.value }.forEach { (perm, _) ->
+                android.util.Log.e("MainActivity", "Permission denied: $perm")
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val detector = YoloDetector(this)
+        viewModel = MainViewModel(detector)
+
+        setContent {
+            App_BlindenstockaddonTheme {
+                val uiState by viewModel.uiState.collectAsState()
+                when (uiState.currentScreen) {
+                    AppScreen.START -> StartScreen(
+                        viewModel = viewModel,
+                        onStartBackground = { sourceType, url -> startBackgroundService(sourceType, url) },
+                        onStopBackground = { stopBackgroundService() }
+                    )
+                    AppScreen.CAMERA -> CameraScreen(viewModel = viewModel)
+                }
+            }
+        }
+
+        if (!hasAllPermissions()) {
+            permissionLauncher.launch(requiredPermissions)
+        } else {
+            checkBatteryOptimization()
+        }
+    }
+
+    private fun hasAllPermissions(): Boolean = requiredPermissions.all {
+        ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun checkBatteryOptimization() {
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = "package:$packageName".toUri()
+            }
+            startActivity(intent)
+        }
+    }
+
+    private fun startBackgroundService(sourceType: String, url: String) {
+        // GPU-Schutz: UI-Stream schließen, bevor der Service die GPU anfordert
+        viewModel.stopStream()
+
+        val intent = Intent(this, AppForegroundService::class.java).apply {
+            putExtra("EXTRA_SOURCE_TYPE", sourceType)
+            putExtra("EXTRA_STREAM_URL", url)
+            putExtra("EXTRA_ALLOW_ROADWAY", viewModel.uiState.value.isRoadwayAlertsEnabled)
+        }
+        try {
+            startForegroundService(intent)
+            viewModel.setBackgroundRunning(true)
+            android.util.Log.d("MainActivity", "Background service started with type $sourceType.")
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to start service: ${e.message}", e)
+        }
+    }
+
+    private fun stopBackgroundService() {
+        val intent = Intent(this, AppForegroundService::class.java)
+        stopService(intent)
+        viewModel.setBackgroundRunning(false)
+        android.util.Log.d("MainActivity", "Background service stopped.")
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/system_services/AppForegroundService.kt">
+package com.example.app_blindenstock_add_on.framework.system_services
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.IBinder
+import android.os.PowerManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
+import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
+import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
+import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
+import com.example.app_blindenstock_add_on.data.video.VideoSource
+import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
+import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+
+data class ServiceMetrics(
+    val fps: Int = 0,
+    val inferenceTime: Long = 0,
+    val isWalking: Boolean = false,
+    val detectionCount: Int = 0,
+    val isRunning: Boolean = false,
+    val currentPhrase: String = "Clear"
+)
+
+class AppForegroundService : Service(), LifecycleOwner {
+
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+
+    private var videoSource: VideoSource? = null
+    private lateinit var detector: YoloDetector
+    private var motionTracker: UserMotionTracker? = null
+    private var speechManager: SpeechFeedbackManager? = null
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private var fpsCounter = 0
+    private var fpsWindowStart = 0L
+    private var smoothedFps = 0
+
+    companion object {
+        private const val CHANNEL_ID = "AppForegroundServiceChannel"
+        private const val NOTIFICATION_ID = 1
+
+        @Volatile
+        var allowRoadwayAlerts: Boolean = false
+
+        private val _metrics = MutableStateFlow(ServiceMetrics())
+        val metrics: StateFlow<ServiceMetrics> = _metrics.asStateFlow()
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        lifecycleRegistry.currentState = Lifecycle.State.CREATED
+        createNotificationChannel()
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "AppForegroundService::CpuLock"
+        )
+
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        wifiLock = wifiManager.createWifiLock(
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
+            "AppForegroundService::WifiLock"
+        )
+
+        detector = YoloDetector(this)
+        motionTracker = UserMotionTracker(this).apply { start() }
+        speechManager = SpeechFeedbackManager(this)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+
+        if (wakeLock?.isHeld != true) {
+            wakeLock?.acquire(10 * 60 * 60 * 1000L)
+        }
+        if (wifiLock?.isHeld != true) {
+            wifiLock?.acquire()
+        }
+
+        val sourceType = intent?.getStringExtra("EXTRA_SOURCE_TYPE") ?: "MJPEG"
+        val url = intent?.getStringExtra("EXTRA_STREAM_URL") ?: "http://192.168.4.1/stream"
+        if (intent?.hasExtra("EXTRA_ALLOW_ROADWAY") == true) {
+            allowRoadwayAlerts = intent.getBooleanExtra("EXTRA_ALLOW_ROADWAY", false)
+        }
+
+        val isEspMode = (sourceType != "CAMERA")
+
+        val notification = createNotification()
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+            _metrics.value = _metrics.value.copy(isRunning = true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppForegroundService", "Start-Fehler: ${e.message}", e)
+        }
+
+        videoSource = if (sourceType == "CAMERA") {
+            LocalCameraSource(this, this)
+        } else {
+            MjpegStreamer(OkHttpClient(), url)
+        }
+
+        fpsCounter = 0
+        fpsWindowStart = System.currentTimeMillis()
+        smoothedFps = 0
+
+        serviceScope.launch {
+            try {
+                videoSource?.getFrames()
+                    ?.conflate()
+                    ?.collect { bitmap ->
+                        val currentTime = System.currentTimeMillis()
+
+                        fpsCounter++
+                        val elapsed = currentTime - fpsWindowStart
+                        if (elapsed >= 1000L) {
+                            smoothedFps = ((fpsCounter * 1000L) / elapsed).toInt()
+                            fpsCounter = 0
+                            fpsWindowStart = currentTime
+                        }
+
+                        val isWalking = motionTracker?.isUserWalking ?: false
+                        val analysisResult = detector.detect(bitmap, isWalking)
+                        val detections = analysisResult.detections
+                        val infTime = detector.lastInferenceTime
+
+                        val guidance = GuidanceSynthesizer.synthesize(
+                            result = analysisResult,
+                            isUserWalking = isWalking,
+                            allowRoadwayAlerts = allowRoadwayAlerts,
+                            isEsp32 = isEspMode
+                        )
+                        speechManager?.processGuidance(guidance)
+
+                        _metrics.value = ServiceMetrics(
+                            fps = smoothedFps,
+                            inferenceTime = infTime,
+                            isWalking = isWalking,
+                            detectionCount = detections.size,
+                            isRunning = true,
+                            currentPhrase = guidance.phrase
+                        )
+                    }
+            } catch (e: Exception) {
+                android.util.Log.e("AppForegroundService", "Pipeline-Fehler: ${e.message}", e)
+            }
+        }
+
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        super.onDestroy()
+        videoSource?.stop()
+        videoSource = null
+        motionTracker?.stop()
+        motionTracker = null
+        speechManager?.shutdown()
+        speechManager = null
+        detector.close()
+
+        if (wifiLock?.isHeld == true) {
+            wifiLock?.release()
+        }
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
+
+        _metrics.value = ServiceMetrics(isRunning = false)
+        serviceJob.cancel()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun createNotification(): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Blindenstock Assistenz aktiv")
+            .setContentText("ESP32-CAM Tracking & Audio laufen im Hintergrund.")
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = NotificationChannel(
+                CHANNEL_ID,
+                "App Assistance Service Channel",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(serviceChannel)
+        }
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/theme/Color.kt">
+package com.example.app_blindenstock_add_on.framework.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val Purple80 = Color(0xFFD0BCFF)
+val PurpleGrey80 = Color(0xFFCCC2DC)
+val Pink80 = Color(0xFFEFB8C8)
+
+val Purple40 = Color(0xFF6650a4)
+val PurpleGrey40 = Color(0xFF625b71)
+val Pink40 = Color(0xFF7D5260)
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/theme/Theme.kt">
+package com.example.app_blindenstock_add_on.framework.ui.theme
+
+import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+
+private val DarkColorScheme = darkColorScheme(
+    primary = Purple80,
+    secondary = PurpleGrey80,
+    tertiary = Pink80
+)
+
+private val LightColorScheme = lightColorScheme(
+    primary = Purple40,
+    secondary = PurpleGrey40,
+    tertiary = Pink40
+
+    /* Other default colors to override
+    background = Color(0xFFFFFBFE),
+    surface = Color(0xFFFFFBFE),
+    onPrimary = Color.White,
+    onSecondary = Color.White,
+    onTertiary = Color.White,
+    onBackground = Color(0xFF1C1B1F),
+    onSurface = Color(0xFF1C1B1F),
+    */
+)
+
+@Composable
+fun App_BlindenstockaddonTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    // Dynamic color is available on Android 12+
+    dynamicColor: Boolean = true,
+    content: @Composable () -> Unit
+) {
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+
+        darkTheme -> DarkColorScheme
+        else -> LightColorScheme
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography,
+        content = content
+    )
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/theme/Type.kt">
+package com.example.app_blindenstock_add_on.framework.ui.theme
+
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+
+// Set of Material typography styles to start with
+val Typography = Typography(
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 24.sp,
+        letterSpacing = 0.5.sp
+    )
+    /* Other default text styles to override
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = 0.sp
+    ),
+    labelSmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.5.sp
+    )
+    */
+)
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/CameraScreen.kt">
+package com.example.app_blindenstock_add_on.framework.ui
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
+import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
+
+@Composable
+fun CameraScreen(viewModel: MainViewModel) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+        color = Color(0xFF090C10)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Oberes Telemetrie-Band
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF161B22))
+                    .border(1.dp, Color(0xFF30363D), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TelemetryPill(label = "FPS", value = "${uiState.currentFps}", color = Color(0xFF58A6FF))
+                TelemetryPill(label = "LAT", value = "${uiState.inferenceTime}ms", color = Color(0xFF58A6FF))
+                TelemetryPill(label = "MOTION", value = if (uiState.isUserWalking) "WALK" else "STAND", color = Color(0xFFD29922))
+                TelemetryPill(label = "SURFACE", value = uiState.primarySurface.uppercase(), color = Color.White)
+            }
+
+            // Roadway-Filter Switch
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF161B22))
+                    .border(1.dp, Color(0xFF30363D), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "ROADWAY ALERTS",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (uiState.isRoadwayAlertsEnabled) Color(0xFF58A6FF) else Color(0xFF8B949E)
+                )
+
+                Switch(
+                    checked = uiState.isRoadwayAlertsEnabled,
+                    onCheckedChange = { viewModel.toggleRoadwayAlerts() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color(0xFF238636),
+                        uncheckedThumbColor = Color(0xFF8B949E),
+                        uncheckedTrackColor = Color(0xFF21262D)
+                    )
+                )
+            }
+
+            // Seitenverhältnis-treuer Videocontainer (Kein Verzerren bei 640x480)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black)
+                    .border(1.dp, Color(0xFF30363D), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                val frame = uiState.currentFrame
+                if (frame != null) {
+                    val frameAspect = frame.width.toFloat() / frame.height.toFloat()
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .wrapContentSize(Alignment.Center)
+                            .aspectRatio(frameAspect)
+                            .clip(RoundedCornerShape(8.dp))
+                    ) {
+                        Image(
+                            bitmap = frame.asImageBitmap(),
+                            contentDescription = "Video Feed",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.FillBounds
+                        )
+
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val canvasWidth = size.width
+                            val canvasHeight = size.height
+
+                            // Gehkorridor-Hilfslinien (35% und 65%)
+                            drawLine(
+                                color = Color(0x3358A6FF),
+                                start = Offset(canvasWidth * 0.35f, 0f),
+                                end = Offset(canvasWidth * 0.35f, canvasHeight),
+                                strokeWidth = 2f
+                            )
+                            drawLine(
+                                color = Color(0x3358A6FF),
+                                start = Offset(canvasWidth * 0.65f, 0f),
+                                end = Offset(canvasWidth * 0.65f, canvasHeight),
+                                strokeWidth = 2f
+                            )
+
+                            // Bounding Boxes
+                            uiState.detections.forEach { det ->
+                                if (det.className in listOf("sidewalk", "path")) return@forEach
+                                if (!uiState.isRoadwayAlertsEnabled && det.className == "roadway") return@forEach
+
+                                val left = det.boundingBox.x * canvasWidth
+                                val top = det.boundingBox.y * canvasHeight
+                                val width = det.boundingBox.width * canvasWidth
+                                val height = det.boundingBox.height * canvasHeight
+
+                                val boxColor = when (det.priority) {
+                                    "CRITICAL" -> Color(0xFFFF3333)
+                                    "HIGH" -> Color(0xFFFF9800)
+                                    "MEDIUM" -> Color(0xFFFFEB3B)
+                                    else -> Color(0xFF4CAF50)
+                                }
+
+                                drawRect(
+                                    color = boxColor,
+                                    topLeft = Offset(left, top),
+                                    size = Size(width, height),
+                                    style = Stroke(width = 3.5f)
+                                )
+
+                                val tag = "${det.className} ${(det.score * 100).toInt()}%"
+                                drawContext.canvas.nativeCanvas.apply {
+                                    val paint = android.graphics.Paint().apply {
+                                        color = android.graphics.Color.WHITE
+                                        textSize = 28f
+                                        isFakeBoldText = true
+                                        setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
+                                    }
+                                    drawText(tag, left + 8f, (top - 10f).coerceAtLeast(30f), paint)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "WAITING FOR CAMERA STREAM...",
+                        color = Color(0xFF8B949E),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // Aktives Sprach-Banner
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        1.dp,
+                        if (uiState.currentGuidancePhrase.startsWith("Stop")) Color(0xFFF85149) else Color(0xFF238636),
+                        RoundedCornerShape(8.dp)
+                    ),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF161B22))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "AUDIO STATUS",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            color = Color(0xFF8B949E)
+                        )
+                        Text(
+                            text = uiState.currentGuidancePhrase,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                uiState.currentGuidancePhrase.startsWith("Stop") -> Color(0xFFFF7B72)
+                                uiState.currentGuidancePhrase == "Clear" -> Color(0xFF7EE787)
+                                else -> Color(0xFFFFA657)
+                            }
+                        )
+                    }
+
+                    Text(
+                        text = "${uiState.detections.size} OBJECTS",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        color = Color(0xFF8B949E)
+                    )
+                }
+            }
+
+            Button(
+                onClick = {
+                    viewModel.stopStream()
+                    viewModel.navigateTo(AppScreen.START)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF21262D),
+                    contentColor = Color(0xFFF85149)
+                ),
+                shape = RoundedCornerShape(6.dp)
+            ) {
+                Text(
+                    text = "STOP PIPELINE",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TelemetryPill(label: String, value: String, color: Color) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = label,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Color(0xFF8B949E)
+        )
+        Text(
+            text = value,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/StartScreen.kt">
+package com.example.app_blindenstock_add_on.framework.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
+import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
+import com.example.app_blindenstock_add_on.framework.viewmodel.SourceType
+
+@Composable
+fun StartScreen(
+    viewModel: MainViewModel,
+    onStartBackground: (String, String) -> Unit,
+    onStopBackground: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+        color = Color(0xFF090C10)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Header
+            Column {
+                Text(
+                    text = "VISION PIPELINE CONFIG",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = "Assistive Object Tracking & Navigation",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = Color(0xFF8B949E)
+                )
+            }
+
+            // Input Selection Card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFF30363D), RoundedCornerShape(8.dp)),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF161B22))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "VIDEO SOURCE",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF8B949E)
+                    )
+
+                    // Source Toggle
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0D1117))
+                            .border(1.dp, Color(0xFF21262D), RoundedCornerShape(6.dp))
+                            .padding(2.dp)
+                    ) {
+                        SourceTab(
+                            title = "ESP32-CAM (MJPEG)",
+                            isSelected = uiState.sourceType == SourceType.MJPEG,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            viewModel.updateSourceType(SourceType.MJPEG)
+                        }
+                        SourceTab(
+                            title = "INTERNAL CAM",
+                            isSelected = uiState.sourceType == SourceType.CAMERA,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            viewModel.updateSourceType(SourceType.CAMERA)
+                        }
+                    }
+
+                    if (uiState.sourceType == SourceType.MJPEG) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = uiState.streamUrl,
+                                onValueChange = { viewModel.updateUrl(it) },
+                                label = { Text("STREAM ENDPOINT URL", fontFamily = FontFamily.Monospace, fontSize = 10.sp) },
+                                singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedBorderColor = Color(0xFF58A6FF),
+                                    unfocusedBorderColor = Color(0xFF30363D),
+                                    focusedLabelColor = Color(0xFF58A6FF),
+                                    unfocusedLabelColor = Color(0xFF8B949E)
+                                )
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                PresetChip(text = "AP: 192.168.4.1/stream") {
+                                    viewModel.updateUrl("http://192.168.4.1/stream")
+                                }
+                                PresetChip(text = "Hotspot: 192.168.43.1/stream") {
+                                    viewModel.updateUrl("http://192.168.43.1/stream")
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "Standard Android CameraX Pipeline aktiv (320x240 RGB).",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = Color(0xFF8B949E)
+                        )
+                    }
+                }
+            }
+
+            // Live Service Telemetry Card (nur sichtbar wenn Service aktiv)
+            if (uiState.isBackgroundRunning) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFF238636), RoundedCornerShape(8.dp)),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0D1117))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "SERVICE ACTIVE",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF3FB950)
+                            )
+                            Text(
+                                text = "${uiState.currentFps} FPS",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF58A6FF)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "LATENCY: ${uiState.inferenceTime} ms",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = Color(0xFF8B949E)
+                            )
+                            Text(
+                                text = if (uiState.isUserWalking) "WALKING" else "STANDING",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFD29922)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Action Buttons
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = {
+                        viewModel.navigateTo(AppScreen.CAMERA)
+                        viewModel.startStream(context, lifecycleOwner)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF238636))
+                ) {
+                    Text(
+                        text = "Test- and Preview Mode",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+
+                if (uiState.isBackgroundRunning) {
+                    Button(
+                        onClick = { onStopBackground() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDA3633))
+                    ) {
+                        Text(
+                            text = "Stop Background Service",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { onStartBackground(uiState.sourceType.name, uiState.streamUrl) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF30363D)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC9D1D9))
+                    ) {
+                        Text(
+                            text = "Run in Background",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceTab(
+    title: String,
+    isSelected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (isSelected) Color(0xFF21262D) else Color.Transparent)
+            .clickable { onClick() }
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = title,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            color = if (isSelected) Color(0xFF58A6FF) else Color(0xFF8B949E)
+        )
+    }
+}
+
+@Composable
+private fun PresetChip(text: String, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable { onClick() },
+        shape = RoundedCornerShape(4.dp),
+        color = Color(0xFF21262D)
+    ) {
+        Text(
+            text = text,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = Color(0xFF8B949E),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/viewmodel/MainViewModel.kt">
+package com.example.app_blindenstock_add_on.framework.viewmodel
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
+import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
+import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
+import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
+import com.example.app_blindenstock_add_on.data.video.VideoSource
+import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
+import com.example.app_blindenstock_add_on.domain.model.CorridorAnalysis
+import com.example.app_blindenstock_add_on.domain.model.Detection
+import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
+import com.example.app_blindenstock_add_on.framework.system_services.AppForegroundService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+enum class AppScreen { START, CAMERA }
+enum class SourceType { MJPEG, CAMERA }
+
+data class MainUiState(
+    val currentScreen: AppScreen = AppScreen.START,
+    val currentFrame: Bitmap? = null,
+    val detections: List<Detection> = emptyList(),
+    val corridor: CorridorAnalysis = CorridorAnalysis(),
+    val primarySurface: String = "unknown",
+    val currentGuidancePhrase: String = "Clear",
+    val isRoadwayAlertsEnabled: Boolean = false,
+    val detectionLogs: List<String> = emptyList(),
+    val errorMessage: String? = null,
+    val streamUrl: String = "http://192.168.4.1/stream",
+    val sourceType: SourceType = SourceType.MJPEG,
+    val isStreaming: Boolean = false,
+    val isBackgroundRunning: Boolean = false,
+    val isUserWalking: Boolean = false,
+    val inferenceTime: Long = 0,
+    val currentFps: Int = 0
+)
+
+class MainViewModel(
+    private val detector: YoloDetector
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(MainUiState())
+    val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    private var streamJob: Job? = null
+    private var videoSource: VideoSource? = null
+    private var motionTracker: UserMotionTracker? = null
+    private var speechManager: SpeechFeedbackManager? = null
+
+    private var fpsCounter = 0
+    private var fpsWindowStart = 0L
+    private var smoothedFps = 0
+
+    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    init {
+        viewModelScope.launch {
+            AppForegroundService.metrics.collect { metrics ->
+                if (_uiState.value.isBackgroundRunning || metrics.isRunning) {
+                    _uiState.value = _uiState.value.copy(
+                        isBackgroundRunning = metrics.isRunning,
+                        currentFps = metrics.fps,
+                        inferenceTime = metrics.inferenceTime,
+                        isUserWalking = metrics.isWalking
+                    )
+                }
+            }
+        }
+    }
+
+    fun navigateTo(screen: AppScreen) { _uiState.value = _uiState.value.copy(currentScreen = screen) }
+    fun updateUrl(newUrl: String) { _uiState.value = _uiState.value.copy(streamUrl = newUrl) }
+    fun updateSourceType(type: SourceType) { _uiState.value = _uiState.value.copy(sourceType = type) }
+    fun setBackgroundRunning(running: Boolean) { _uiState.value = _uiState.value.copy(isBackgroundRunning = running) }
+
+    fun toggleRoadwayAlerts() {
+        val next = !_uiState.value.isRoadwayAlertsEnabled
+        _uiState.value = _uiState.value.copy(isRoadwayAlertsEnabled = next)
+        AppForegroundService.allowRoadwayAlerts = next
+    }
+
+    fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
+        if (_uiState.value.isStreaming) return
+
+        val serviceIntent = Intent(context, AppForegroundService::class.java)
+        context.stopService(serviceIntent)
+        _uiState.value = _uiState.value.copy(isBackgroundRunning = false)
+
+        speechManager = SpeechFeedbackManager(context)
+        motionTracker = UserMotionTracker(context).apply { start() }
+
+        val type = _uiState.value.sourceType
+        val url = _uiState.value.streamUrl
+        val isEspMode = (type == SourceType.MJPEG)
+
+        videoSource = when (type) {
+            SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url)
+            SourceType.CAMERA -> {
+                val activity = context as? androidx.activity.ComponentActivity
+                    ?: throw IllegalStateException("Context must be a ComponentActivity")
+                LocalCameraSource(context, activity)
+            }
+        }
+
+        fpsCounter = 0
+        fpsWindowStart = System.currentTimeMillis()
+        smoothedFps = 0
+
+        _uiState.value = _uiState.value.copy(isStreaming = true)
+
+        streamJob = viewModelScope.launch(Dispatchers.Default) {
+            try {
+                videoSource?.getFrames()
+                    ?.conflate()
+                    ?.collect { bitmap ->
+                        val currentTime = System.currentTimeMillis()
+
+                        fpsCounter++
+                        val elapsed = currentTime - fpsWindowStart
+                        if (elapsed >= 1000L) {
+                            smoothedFps = ((fpsCounter * 1000L) / elapsed).toInt()
+                            fpsCounter = 0
+                            fpsWindowStart = currentTime
+                        }
+
+                        val isWalking = motionTracker?.isUserWalking ?: false
+                        val result = detector.detect(bitmap, isWalking)
+                        val infTime = detector.lastInferenceTime
+
+                        val guidance = GuidanceSynthesizer.synthesize(
+                            result = result,
+                            isUserWalking = isWalking,
+                            allowRoadwayAlerts = _uiState.value.isRoadwayAlertsEnabled,
+                            isEsp32 = isEspMode
+                        )
+                        val wasSpoken = speechManager?.processGuidance(guidance) ?: false
+
+                        val updatedLogs = if (wasSpoken) {
+                            val logEntry = "[${timeFormat.format(Date(currentTime))}] ${guidance.phrase}"
+                            (listOf(logEntry) + _uiState.value.detectionLogs).take(30)
+                        } else {
+                            _uiState.value.detectionLogs
+                        }
+
+                        _uiState.value = _uiState.value.copy(
+                            currentFrame = bitmap,
+                            detections = result.detections,
+                            primarySurface = result.primarySurface,
+                            currentGuidancePhrase = guidance.phrase,
+                            detectionLogs = updatedLogs,
+                            inferenceTime = infTime,
+                            currentFps = smoothedFps,
+                            isUserWalking = isWalking
+                        )
+                    }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Stream error: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(isStreaming = false, errorMessage = e.message)
+            }
+        }
+    }
+
+    fun stopStream() {
+        streamJob?.cancel()
+        streamJob = null
+        videoSource?.stop()
+        videoSource = null
+        motionTracker?.stop()
+        motionTracker = null
+        speechManager?.shutdown()
+        speechManager = null
+        _uiState.value = _uiState.value.copy(isStreaming = false, currentFrame = null, detections = emptyList())
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopStream()
+        detector.close()
+    }
+}
+</file>
+
+<file path="app/src/main/keepRules/rules.keep">
+# Add project specific R8 rules here.
+# AGP will combine all keep rule files in src/main/keepRules to pass to R8
+#
+# For more details, see
+#   https://d.android.com/r/tools/r8/keep-rules
+
+# If your project uses WebView with JS, uncomment the following
+# and specify the fully qualified class name to the JavaScript interface
+# class:
+#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
+#   public *;
+#}
+</file>
+
+<file path="app/src/main/res/drawable/ic_launcher_background.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9,0L9,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,0L19,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,0L29,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,0L39,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,0L49,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,0L59,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,0L69,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,0L79,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M89,0L89,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M99,0L99,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,9L108,9"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,19L108,19"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,29L108,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,39L108,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,49L108,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,59L108,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,69L108,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,79L108,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,89L108,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,99L108,99"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,29L89,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,39L89,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,49L89,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,59L89,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,69L89,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,79L89,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,19L29,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,19L39,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,19L49,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,19L59,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,19L69,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,19L79,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+</vector>
+</file>
+
+<file path="app/src/main/res/drawable/ic_launcher_foreground.xml">
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="85.84757"
+                android:endY="92.4963"
+                android:startX="42.9492"
+                android:startY="49.59793"
+                android:type="linear">
+                <item
+                    android:color="#44000000"
+                    android:offset="0.0" />
+                <item
+                    android:color="#00000000"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
+        android:strokeWidth="1"
+        android:strokeColor="#00000000" />
+</vector>
+</file>
+
+<file path="app/src/main/res/mipmap-anydpi/ic_launcher_round.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+</file>
+
+<file path="app/src/main/res/mipmap-anydpi/ic_launcher.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+</file>
+
+<file path="app/src/main/res/values/colors.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+</file>
+
+<file path="app/src/main/res/values/strings.xml">
+<resources>
+    <string name="app_name">App_Blindenstock-add-on</string>
+    <string name="fgs_special_use_justification">The app needs to run a foreground service to provide assistance to blind people even when the app is in the background.</string>
+</resources>
+</file>
+
+<file path="app/src/main/res/values/themes.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.App_Blindenstockaddon" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
+</file>
+
+<file path="app/src/main/res/xml/backup_rules.xml">
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample backup rules file; uncomment and customize as necessary.
+   See https://developer.android.com/guide/topics/data/autobackup
+   for details.
+   Note: This file is ignored for devices older than API 31
+   See https://developer.android.com/about/versions/12/backup-restore
+-->
+<full-backup-content>
+    <!--
+   <include domain="sharedpref" path="."/>
+   <exclude domain="sharedpref" path="device.xml"/>
+-->
+</full-backup-content>
+</file>
+
+<file path="app/src/main/res/xml/data_extraction_rules.xml">
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample data extraction rules file; uncomment and customize as necessary.
+   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
+   for details.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- TODO: Use <include> and <exclude> to control what is backed up.
+        <include .../>
+        <exclude .../>
+        -->
+    </cloud-backup>
+    <!--
+    <device-transfer>
+        <include .../>
+        <exclude .../>
+    </device-transfer>
+    -->
+</data-extraction-rules>
+</file>
+
+<file path="app/src/main/AndroidManifest.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:tools="http://schemas.android.com/tools"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
+        tools:ignore="ForegroundServicesPolicy" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
+    <application
+        tools:replace="android:allowBackup"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.App_Blindenstockaddon">
+
+        <service
+            android:name=".framework.system_services.AppForegroundService"
+            android:foregroundServiceType="specialUse"
+            android:enabled="true"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="@string/fgs_special_use_justification" />
+        </service>
+
+        <activity
+            android:name=".framework.activity.MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.App_Blindenstockaddon"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
+</file>
+
+<file path="app/src/test/java/com/example/app_blindenstock_add_on/ExampleUnitTest.kt">
+package com.example.app_blindenstock_add_on
+
+import org.junit.Test
+
+import org.junit.Assert.*
+
+/**
+ * Example local unit test, which will execute on the development machine (host).
+ *
+ * See [testing documentation](http://d.android.com/tools/testing).
+ */
+class ExampleUnitTest {
+    @Test
+    fun addition_isCorrect() {
+        assertEquals(4, 2 + 2)
+    }
+}
+</file>
+
+<file path="app/.gitignore">
+/build
+</file>
+
+<file path="app/build.gradle.kts">
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
+
+android {
+    namespace = "com.example.app_blindenstock_add_on"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.example.app_blindenstock_add_on"
+        minSdk = 34
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            optimization {
+                enable = false
+            }
+        }
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    buildFeatures {
+        compose = true
+    }
+}
+
+dependencies {
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.graphics.path)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.okhttp)
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.gpu)
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
+    // implementation(libs.tensorflow.lite.support)
+    implementation(libs.kotlinx.coroutines.android)
+    
+    // CameraX
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.junit)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+}
+</file>
+
+<file path="gradle/wrapper/gradle-wrapper.properties">
+#Wed Jul 01 10:42:28 CEST 2026
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.6.0-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+</file>
+
+<file path="gradle/gradle-daemon-jvm.properties">
+#This file is generated by updateDaemonJvm
+toolchainUrl.FREE_BSD.AARCH64=https\://api.foojay.io/disco/v3.0/ids/ec7520a1e057cd116f9544c42142a16b/redirect
+toolchainUrl.FREE_BSD.X86_64=https\://api.foojay.io/disco/v3.0/ids/4c4f879899012ff0a8b2e2117df03b0e/redirect
+toolchainUrl.LINUX.AARCH64=https\://api.foojay.io/disco/v3.0/ids/ec7520a1e057cd116f9544c42142a16b/redirect
+toolchainUrl.LINUX.X86_64=https\://api.foojay.io/disco/v3.0/ids/4c4f879899012ff0a8b2e2117df03b0e/redirect
+toolchainUrl.MAC_OS.AARCH64=https\://api.foojay.io/disco/v3.0/ids/73bcfb608d1fde9fb62e462f834a3299/redirect
+toolchainUrl.MAC_OS.X86_64=https\://api.foojay.io/disco/v3.0/ids/846ee0d876d26a26f37aa1ce8de73224/redirect
+toolchainUrl.UNIX.AARCH64=https\://api.foojay.io/disco/v3.0/ids/ec7520a1e057cd116f9544c42142a16b/redirect
+toolchainUrl.UNIX.X86_64=https\://api.foojay.io/disco/v3.0/ids/4c4f879899012ff0a8b2e2117df03b0e/redirect
+toolchainUrl.WINDOWS.AARCH64=https\://api.foojay.io/disco/v3.0/ids/9482ddec596298c84656d31d16652665/redirect
+toolchainUrl.WINDOWS.X86_64=https\://api.foojay.io/disco/v3.0/ids/39701d92e1756bb2f141eb67cd4c660e/redirect
+toolchainVersion=21
+</file>
+
+<file path="gradle/libs.versions.toml">
+[versions]
+agp = "9.4.0"
+coreKtx = "1.12.0"
+junit = "4.13.2"
+junitVersion = "1.1.5"
+espressoCore = "3.5.1"
+lifecycleRuntimeKtx = "2.6.1"
+activityCompose = "1.8.0"
+kotlin = "2.2.10"
+composeBom = "2026.02.01"
+okhttp = "4.12.0"
+tensorflowLite = "2.16.1"
+tensorflowLiteSupport = "0.4.4"
+kotlinxCoroutines = "1.8.0"
+graphicsPath = "1.1.0"
+camerax = "1.3.4"
+
+[libraries]
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+graphics-path = { group = "androidx.graphics", name = "graphics-path", version.ref = "graphicsPath" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tensorflowLite" }
+tensorflow-lite-gpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tensorflowLite" }
+tensorflow-lite-support = { group = "org.tensorflow", name = "tensorflow-lite-support", version.ref = "tensorflowLiteSupport" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+</file>
+
+<file path=".gitignore">
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+</file>
+
+<file path="build.gradle.kts">
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+}
+</file>
+
+<file path="gradle.properties">
+# Project-wide Gradle settings.
+# IDE (e.g. Android Studio) users:
+# Gradle settings configured through the IDE *will override*
+# any settings specified in this file.
+# For more details on how to configure your build environment visit
+# http://www.gradle.org/docs/current/userguide/build_environment.html
+# Specifies the JVM arguments used for the daemon process.
+# The setting is particularly useful for tweaking memory settings.
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+# When configured, Gradle will run in incubating parallel mode.
+# This option should only be used with decoupled projects. For more details, visit
+# https://developer.android.com/r/tools/gradle-multi-project-decoupled-projects
+# org.gradle.parallel=true
+# When enabled, the Configuration Cache allows Gradle to skip the configuration
+# phase entirely if nothing that affects the build configuration (such as build scripts)
+# has changed. Additionally, Gradle applies performance optimizations to task execution.
+org.gradle.configuration-cache=true
+# Kotlin code style for this project: "official" or "obsolete":
+kotlin.code.style=official
+</file>
+
+<file path="gradlew">
+#!/bin/sh
+
+#
+# Copyright © 2015 the original authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+##############################################################################
+#
+#   Gradle start up script for POSIX generated by Gradle.
+#
+#   Important for running:
+#
+#   (1) You need a POSIX-compliant shell to run this script. If your /bin/sh is
+#       noncompliant, but you have some other compliant shell such as ksh or
+#       bash, then to run this script, type that shell name before the whole
+#       command line, like:
+#
+#           ksh Gradle
+#
+#       Busybox and similar reduced shells will NOT work, because this script
+#       requires all of these POSIX shell features:
+#         * functions;
+#         * expansions «$var», «${var}», «${var:-default}», «${var+SET}»,
+#           «${var#prefix}», «${var%suffix}», and «$( cmd )»;
+#         * compound commands having a testable exit status, especially «case»;
+#         * various built-in commands including «command», «set», and «ulimit».
+#
+#   Important for patching:
+#
+#   (2) This script targets any POSIX shell, so it avoids extensions provided
+#       by Bash, Ksh, etc; in particular arrays are avoided.
+#
+#       The "traditional" practice of packing multiple parameters into a
+#       space-separated string is a well documented source of bugs and security
+#       problems, so this is (mostly) avoided, by progressively accumulating
+#       options in "$@", and eventually passing that to Java.
+#
+#       Where the inherited environment variables (DEFAULT_JVM_OPTS, JAVA_OPTS,
+#       and GRADLE_OPTS) rely on word-splitting, this is performed explicitly;
+#       see the in-line comments for details.
+#
+#       There are tweaks for specific operating systems such as AIX, CygWin,
+#       Darwin, MinGW, and NonStop.
+#
+#   (3) This script is generated from the Groovy template
+#       https://github.com/gradle/gradle/blob/HEAD/platforms/jvm/plugins-application/src/main/resources/org/gradle/api/internal/plugins/unixStartScript.txt
+#       within the Gradle project.
+#
+#       You can find Gradle at https://github.com/gradle/gradle/.
+#
+##############################################################################
+
+# Attempt to set APP_HOME
+
+# Resolve links: $0 may be a link
+app_path=$0
+
+# Need this for daisy-chained symlinks.
+while
+    APP_HOME=${app_path%"${app_path##*/}"}  # leaves a trailing /; empty if no leading path
+    [ -h "$app_path" ]
+do
+    ls=$( ls -ld "$app_path" )
+    link=${ls#*' -> '}
+    case $link in             #(
+      /*)   app_path=$link ;; #(
+      *)    app_path=$APP_HOME$link ;;
+    esac
+done
+
+# This is normally unused
+# shellcheck disable=SC2034
+APP_BASE_NAME=${0##*/}
+# Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
+APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
+
+# Use the maximum available, or set MAX_FD != -1 to use that value.
+MAX_FD=maximum
+
+warn () {
+    echo "$*"
+} >&2
+
+die () {
+    echo
+    echo "$*"
+    echo
+    exit 1
+} >&2
+
+# OS specific support (must be 'true' or 'false').
+cygwin=false
+msys=false
+darwin=false
+nonstop=false
+case "$( uname )" in                #(
+  CYGWIN* )         cygwin=true  ;; #(
+  Darwin* )         darwin=true  ;; #(
+  MSYS* | MINGW* )  msys=true    ;; #(
+  NONSTOP* )        nonstop=true ;;
+esac
+
+CLASSPATH="\\\"\\\""
+
+
+# Determine the Java command to use to start the JVM.
+if [ -n "$JAVA_HOME" ] ; then
+    if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
+        # IBM's JDK on AIX uses strange locations for the executables
+        JAVACMD=$JAVA_HOME/jre/sh/java
+    else
+        JAVACMD=$JAVA_HOME/bin/java
+    fi
+    if [ ! -x "$JAVACMD" ] ; then
+        die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation."
+    fi
+else
+    JAVACMD=java
+    if ! command -v java >/dev/null 2>&1
+    then
+        die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation."
+    fi
+fi
+
+# Increase the maximum file descriptors if we can.
+if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
+    case $MAX_FD in #(
+      max*)
+        # In POSIX sh, ulimit -H is undefined. That's why the result is checked to see if it worked.
+        # shellcheck disable=SC2039,SC3045
+        MAX_FD=$( ulimit -H -n ) ||
+            warn "Could not query maximum file descriptor limit"
+    esac
+    case $MAX_FD in  #(
+      '' | soft) :;; #(
+      *)
+        # In POSIX sh, ulimit -n is undefined. That's why the result is checked to see if it worked.
+        # shellcheck disable=SC2039,SC3045
+        ulimit -n "$MAX_FD" ||
+            warn "Could not set maximum file descriptor limit to $MAX_FD"
+    esac
+fi
+
+# Collect all arguments for the java command, stacking in reverse order:
+#   * args from the command line
+#   * the main class name
+#   * -classpath
+#   * -D...appname settings
+#   * --module-path (only if needed)
+#   * DEFAULT_JVM_OPTS, JAVA_OPTS, and GRADLE_OPTS environment variables.
+
+# For Cygwin or MSYS, switch paths to Windows format before running java
+if "$cygwin" || "$msys" ; then
+    APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
+    CLASSPATH=$( cygpath --path --mixed "$CLASSPATH" )
+
+    JAVACMD=$( cygpath --unix "$JAVACMD" )
+
+    # Now convert the arguments - kludge to limit ourselves to /bin/sh
+    for arg do
+        if
+            case $arg in                                #(
+              -*)   false ;;                            # don't mess with options #(
+              /?*)  t=${arg#/} t=/${t%%/*}              # looks like a POSIX filepath
+                    [ -e "$t" ] ;;                      #(
+              *)    false ;;
+            esac
+        then
+            arg=$( cygpath --path --ignore --mixed "$arg" )
+        fi
+        # Roll the args list around exactly as many times as the number of
+        # args, so each arg winds up back in the position where it started, but
+        # possibly modified.
+        #
+        # NB: a `for` loop captures its iteration list before it begins, so
+        # changing the positional parameters here affects neither the number of
+        # iterations, nor the values presented in `arg`.
+        shift                   # remove old arg
+        set -- "$@" "$arg"      # push replacement arg
+    done
+fi
+
+
+# Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+
+# Collect all arguments for the java command:
+#   * DEFAULT_JVM_OPTS, JAVA_OPTS, and optsEnvironmentVar are not allowed to contain shell fragments,
+#     and any embedded shellness will be escaped.
+#   * For example: A user cannot expect ${Hostname} to be expanded, as it is an environment variable and will be
+#     treated as '${Hostname}' itself on the command line.
+
+set -- \
+        "-Dorg.gradle.appname=$APP_BASE_NAME" \
+        -classpath "$CLASSPATH" \
+        -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
+        "$@"
+
+# Stop when "xargs" is not available.
+if ! command -v xargs >/dev/null 2>&1
+then
+    die "xargs is not available"
+fi
+
+# Use "xargs" to parse quoted args.
+#
+# With -n1 it outputs one arg per line, with the quotes and backslashes removed.
+#
+# In Bash we could simply go:
+#
+#   readarray ARGS < <( xargs -n1 <<<"$var" ) &&
+#   set -- "${ARGS[@]}" "$@"
+#
+# but POSIX shell has neither arrays nor command substitution, so instead we
+# post-process each arg (as a line of input to sed) to backslash-escape any
+# character that might be a shell metacharacter, then use eval to reverse
+# that process (while maintaining the separation between arguments), and wrap
+# the whole thing up as a single "set" statement.
+#
+# This will of course break if any of these variables contains a newline or
+# an unmatched quote.
+#
+
+eval "set -- $(
+        printf '%s\n' "$DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS" |
+        xargs -n1 |
+        sed ' s~[^-[:alnum:]+,./:=@_]~\\&~g; ' |
+        tr '\n' ' '
+    )" '"$@"'
+
+exec "$JAVACMD" "$@"
+</file>
+
+<file path="gradlew.bat">
+@rem
+@rem Copyright 2015 the original author or authors.
+@rem
+@rem Licensed under the Apache License, Version 2.0 (the "License");
+@rem you may not use this file except in compliance with the License.
+@rem You may obtain a copy of the License at
+@rem
+@rem      https://www.apache.org/licenses/LICENSE-2.0
+@rem
+@rem Unless required by applicable law or agreed to in writing, software
+@rem distributed under the License is distributed on an "AS IS" BASIS,
+@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+@rem See the License for the specific language governing permissions and
+@rem limitations under the License.
+@rem
+@rem SPDX-License-Identifier: Apache-2.0
+@rem
+
+@if "%DEBUG%"=="" @echo off
+@rem ##########################################################################
+@rem
+@rem  Gradle startup script for Windows
+@rem
+@rem ##########################################################################
+
+@rem Set local scope for the variables with windows NT shell
+if "%OS%"=="Windows_NT" setlocal
+
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+@rem This is normally unused
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+
+@rem Resolve any "." and ".." in APP_HOME to make it shorter.
+for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+
+@rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+
+@rem Find java.exe
+if defined JAVA_HOME goto findJavaFromJavaHome
+
+set JAVA_EXE=java.exe
+%JAVA_EXE% -version >NUL 2>&1
+if %ERRORLEVEL% equ 0 goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:findJavaFromJavaHome
+set JAVA_HOME=%JAVA_HOME:"=%
+set JAVA_EXE=%JAVA_HOME%/bin/java.exe
+
+if exist "%JAVA_EXE%" goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+goto fail
+
+:execute
+@rem Setup the command line
+
+set CLASSPATH=
+
+
+@rem Execute Gradle
+"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%CLASSPATH%" -jar "%APP_HOME%\gradle\wrapper\gradle-wrapper.jar" %*
+
+:end
+@rem End local scope for the variables with windows NT shell
+if %ERRORLEVEL% equ 0 goto mainEnd
+
+:fail
+rem Set variable GRADLE_EXIT_CONSOLE if you need the _script_ return code instead of
+rem the _cmd.exe /c_ return code!
+set EXIT_CODE=%ERRORLEVEL%
+if %EXIT_CODE% equ 0 set EXIT_CODE=1
+if not ""=="%GRADLE_EXIT_CONSOLE%" exit %EXIT_CODE%
+exit /b %EXIT_CODE%
+
+:mainEnd
+if "%OS%"=="Windows_NT" endlocal
+
+:omega
+</file>
+
+<file path="index.html">
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blindenstock KI-Modul</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 20px; }
+        h1 { color: #00adb5; font-size: 20px; }
+        #status { color: #ffde7d; font-weight: bold; margin-top: 10px; font-size: 14px; }
+        
+        /* Container begrenzt sich auf die maximale Breite des Streams */
+        #stream-container { position: relative; display: inline-block; margin-top: 20px; border: 2px solid #333; max-width: 100%; }
+        
+        /* Bild passt sich dem Handydisplay an */
+        img { display: block; max-width: 100%; height: auto; }
+        
+        /* Canvas zwingen, sich JEDER Skalierung des Bildes exakt anzupassen */
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Intelligenter Blindenstock - KI Web-Interface</h1>
+    <div id="status">Lade KI-Modell...</div>
+
+    <div id="stream-container">
+        <img id="videoStream" src="http://10.97.102.18/stream" crossorigin="anonymous" width="640" height="480">
+        <canvas id="overlay" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+        const img = document.getElementById('videoStream');
+        const canvas = document.getElementById('overlay');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        let session;
+
+        // Die offiziellen 80 COCO-Objektklassen, die YOLOv8 kennt
+        const labels = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"];
+
+        async function initKI() {
+            try {
+                // Nutzung des WebAssembly-Backends für maximale Kompatibilität ohne HTTPS
+                session = await ort.InferenceSession.create('./yolov8n.onnx', { executionProviders: ['wasm'] });
+                statusDiv.innerHTML = "KI-Modell einsatzbereit! Analysiere Stream...";
+                statusDiv.style.color = "#00adb5";
+                processFrame();
+            } catch (e) {
+                statusDiv.innerHTML = "Fehler beim Laden des Modells: " + e;
+                statusDiv.style.color = "red";
+            }
+        }
+
+        async function processFrame() {
+            if (!session) return;
+
+            // Temporärer Canvas für das YOLOv8-Format (640x640 Pixel)
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = 640;
+            tempCanvas.height = 640;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(img, 0, 0, 640, 640);
+
+            const imgData = tempCtx.getImageData(0, 0, 640, 640);
+            const inputTensor = prepareInput(imgData);
+
+            const feeds = { [session.inputNames[0]]: inputTensor };
+            const outputs = await session.run(feeds);
+            const output = outputs[session.outputNames[0]];
+
+            // Übergabe der Rohdaten an den neuen Auswerter
+            drawBoundingBoxes(output.data);
+
+            // Nächsten Frame anfordern
+            requestAnimationFrame(processFrame);
+        }
+
+        function prepareInput(imgData) {
+            const [r, g, b] = [[], [], []];
+            for (let i = 0; i < imgData.data.length; i += 4) {
+                r.push(imgData.data[i] / 255.0);
+                g.push(imgData.data[i + 1] / 255.0);
+                b.push(imgData.data[i + 2] / 255.0);
+            }
+            const float32Data = new Float32Array([...r, ...g, ...b]);
+            return new ort.Tensor('float32', float32Data, [1, 3, 640, 640]);
+        }
+
+        // ========================================================
+        // NEU: YOLOV8 DECODER & FILTER (POST-PROCESSING)
+        // ========================================================
+        function drawBoundingBoxes(outputData) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            let boxes = [];
+            // YOLOv8n liefert 8400 mögliche Box-Kandidaten im Array
+            for (let c = 0; c < 8400; c++) {
+                let maxScore = 0;
+                let classId = -1;
+                
+                // Zeilen 4 bis 83 enthalten die Wahrscheinlichkeiten für die 80 Klassen
+                for (let r = 4; r < 84; r++) {
+                    let score = outputData[r * 8400 + c];
+                    if (score > maxScore) {
+                        maxScore = score;
+                        classId = r - 4;
+                    }
+                }
+                
+                // Nur Objekte mit mehr als 45% Wahrscheinlichkeit heraussuchen
+                if (maxScore > 0.45) {
+                    let cx = outputData[0 * 8400 + c];
+                    let cy = outputData[1 * 8400 + c];
+                    let w = outputData[2 * 8400 + c];
+                    let h = outputData[3 * 8400 + c];
+                    
+                    // Korrektur der 1:1 Stauchung zurück auf das echte 4:3 Format (640x480)
+                    // Da das Bild im KI-Modell vertikal von 480 auf 640 gestreckt wurde:
+                    let x = cx - w / 2;
+                    let y = (cy - h / 2) * (480 / 640); 
+                    let width = w;
+                    let height = h * (480 / 640);
+                    
+                    // Begrenzung, damit Boxen nicht über den Canvas-Rand ragen
+                    x = Math.max(0, Math.min(640, x));
+                    y = Math.max(0, Math.min(480, y));
+                    
+                    boxes.push({x, y, width, height, score: maxScore, classId});
+                }
+            }
+            
+            // Schnelle Unterdrückung von doppelten/überlappenden Rahmen (Basis-NMS)
+            boxes.sort((a, b) => b.score - a.score);
+            let filteredBoxes = [];
+            for (let box of boxes) {
+                let overlap = false;
+                for (let fBox of filteredBoxes) {
+                    if (Math.abs(box.x - fBox.x) < 40 && Math.abs(box.y - fBox.y) < 40) {
+                        overlap = true;
+                        break;
+                    }
+                }
+                if (!overlap) filteredBoxes.push(box);
+                if (filteredBoxes.length >= 6) break; // Maximal 6 Objekte gleichzeitig anzeigen
+            }
+
+            // Rahmen und Text auf das Canvas zeichnen
+            for (let box of filteredBoxes) {
+                // Rahmen zeichnen
+                ctx.strokeStyle = "#00adb5";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(box.x, box.y, box.width, box.height);
+                
+                // Hintergrund-Label für den Text zeichnen
+                ctx.fillStyle = "#00adb5";
+                ctx.font = "bold 14px Arial";
+                let text = `${labels[box.classId]} ${(box.score * 100).toFixed(0)}%`;
+                ctx.fillText(text, box.x + 5, box.y + 18);
+            }
+        }
+
+        img.onload = () => { initKI(); };
+    </script>
+</body>
+</html>
+</file>
+
+<file path="kimodeltest.py">
+from ultralytics import YOLO
+
+model = YOLO("yolov8n.pt")
+# Exportiert das Modell als optimierte Web-Version
+model.export(format="onnx", imgsz=640, optimize=True)
+</file>
+
+<file path="settings.gradle.kts">
+pluginManagement {
+    repositories {
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "App_Blindenstock-add-on"
+include(":app")
+</file>
+
+</files>
