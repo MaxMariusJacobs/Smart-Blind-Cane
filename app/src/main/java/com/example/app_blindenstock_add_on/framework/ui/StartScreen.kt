@@ -3,8 +3,6 @@ package com.example.app_blindenstock_add_on.framework.ui
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,12 +13,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
 import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
 import com.example.app_blindenstock_add_on.framework.viewmodel.SourceType
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -122,7 +121,7 @@ fun StartScreen(
                                                 viewModel.saveUrl(context, uiState.streamUrl)
                                                 isSaved = true
                                                 scope.launch {
-                                                    delay(2000)
+                                                    delay(2.seconds)
                                                     isSaved = false
                                                 }
                                             }

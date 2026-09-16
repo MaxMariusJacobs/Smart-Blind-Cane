@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">App_Blindenstock-add-on</string>
+    <string name="app_name">Smart-Blind-Cane</string>
     <string name="fgs_special_use_justification">The app needs to run a foreground service to provide assistance to blind people even when the app is in the background.</string>
 </resources>

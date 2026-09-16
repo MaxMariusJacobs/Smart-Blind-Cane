@@ -1,6 +1,7 @@
 package com.example.app_blindenstock_add_on.framework.activity
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -30,11 +31,11 @@ class MainActivity : ComponentActivity() {
         Manifest.permission.POST_NOTIFICATIONS,
         Manifest.permission.NEARBY_WIFI_DEVICES,
         Manifest.permission.CAMERA,
-        Manifest.permission.ACTIVITY_RECOGNITION
+        Manifest.permission.ACTIVITY_RECOGNITION,
     )
 
     private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
+        ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
         val allGranted = permissions.entries.all { it.value }
         if (allGranted) {
@@ -59,7 +60,7 @@ class MainActivity : ComponentActivity() {
                     AppScreen.START -> StartScreen(
                         viewModel = viewModel,
                         onStartBackground = { sourceType, url -> startBackgroundService(sourceType, url) },
-                        onStopBackground = { stopBackgroundService() }
+                        onStopBackground = ::stopBackgroundService,
                     )
                     AppScreen.CAMERA -> CameraScreen(viewModel = viewModel)
                 }
@@ -77,6 +78,7 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
 
+    @SuppressLint("BatteryLife")
     private fun checkBatteryOptimization() {
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
@@ -97,7 +99,7 @@ class MainActivity : ComponentActivity() {
         }
         try {
             startForegroundService(intent)
-            viewModel.setBackgroundRunning(true)
+            viewModel.setBackgroundRunning(running = true)
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Start-Fehler: ${e.message}", e)
         }
@@ -106,6 +108,6 @@ class MainActivity : ComponentActivity() {
     private fun stopBackgroundService() {
         val intent = Intent(this, AppForegroundService::class.java)
         stopService(intent)
-        viewModel.setBackgroundRunning(false)
+        viewModel.setBackgroundRunning(running = false)
     }
 }

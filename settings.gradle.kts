@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "App_Blindenstock-add-on"
+rootProject.name = "Smart-Blind-Cane"
 include(":app")
