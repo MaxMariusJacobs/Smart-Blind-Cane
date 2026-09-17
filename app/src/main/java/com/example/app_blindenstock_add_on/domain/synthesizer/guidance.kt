@@ -1,6 +1,6 @@
 package com.example.app_blindenstock_add_on.domain.synthesizer
 
-import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.AppConfigState
 import com.example.app_blindenstock_add_on.domain.model.FrameAnalysisResult
 
 object GuidanceSynthesizer {
@@ -14,22 +14,27 @@ object GuidanceSynthesizer {
     private var lockedEvadeSide: String = "step left"
     private var lastEvadeLockTime: Long = 0L
     private var clearFrameCounter = 0
-    private var hazardFrameCounter = 0 // Zähler für Gefahren-Frames
+    private var hazardFrameCounter = 0
+
+    // Status für Stop-Situation
+    private var isStopActive = false
+    private var stopEvadeDirection = "Turn left"
 
     fun synthesize(
         result: FrameAnalysisResult,
         isUserWalking: Boolean,
         allowRoadwayAlerts: Boolean = false,
-        isEsp32: Boolean = false
+        isEsp32: Boolean = false,
+        config: AppConfigState
     ): GuidanceOutput {
         val now = System.currentTimeMillis()
         val detections = result.detections
         val hasStairsVisible = detections.any { it.className == "stairs" }
 
-        val stopFloorThreshold = if (isEsp32) AppConfig.STOP_FLOOR_ESP else AppConfig.STOP_FLOOR_PHONE
-        val personFloorMin = if (isEsp32) AppConfig.PERSON_FLOOR_ESP else AppConfig.PERSON_FLOOR_PHONE
-        val objectFloorMin = if (isEsp32) AppConfig.OBJECT_FLOOR_ESP else AppConfig.OBJECT_FLOOR_PHONE
-        val stairsFloorMin = if (isEsp32) AppConfig.STAIRS_FLOOR_ESP else AppConfig.STAIRS_FLOOR_PHONE
+        val stopFloorThreshold = if (isEsp32) config.stopFloorEsp else config.stopFloorPhone
+        val personFloorMin = if (isEsp32) config.personFloorEsp else config.personFloorPhone
+        val objectFloorMin = if (isEsp32) config.objectFloorEsp else config.objectFloorPhone
+        val stairsFloorMin = if (isEsp32) config.stairsFloorEsp else config.stairsFloorPhone
 
         val imminentThreat = detections.firstOrNull { det ->
             if (det.className in listOf("sidewalk", "path")) return@firstOrNull false
@@ -40,7 +45,7 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            val inCorridor = (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT)
+            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
 
             val isDistanceCritical = floorY > stopFloorThreshold
             val isTorsoImminent = (det.className == "person") && (area > 0.15f || det.boundingBox.width > 0.28f) && (floorY > 0.55f)
@@ -52,23 +57,60 @@ object GuidanceSynthesizer {
         if (imminentThreat != null) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
-                return GuidanceOutput("Stop!", isEmergency = true, priorityLevel = 3)
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
+                if (!isStopActive) {
+                    isStopActive = true
+
+                    val tLeft = imminentThreat.boundingBox.x
+                    val tRight = imminentThreat.boundingBox.x + imminentThreat.boundingBox.width
+                    val tCx = tLeft + imminentThreat.boundingBox.width / 2f
+
+                    val threatBlocksLeft = tLeft < 0.25f
+                    val threatBlocksRight = tRight > 0.75f
+
+                    val flankThreshold = 0.60f
+
+                    val hasObstacleLeft = threatBlocksLeft || detections.any {
+                        it != imminentThreat &&
+                                (allowRoadwayAlerts || it.className != "roadway") &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                    }
+                    val hasObstacleRight = threatBlocksRight || detections.any {
+                        it != imminentThreat &&
+                                (allowRoadwayAlerts || it.className != "roadway") &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                    }
+
+                    stopEvadeDirection = when {
+                        !hasObstacleLeft && !hasObstacleRight -> if (tCx >= 0.50f) "Turn left" else "Turn right"
+                        !hasObstacleLeft -> "Turn left"
+                        !hasObstacleRight -> "Turn right"
+                        else -> "Path blocked"
+                    }
+                    return GuidanceOutput("Stop!", isEmergency = true, priorityLevel = 3)
+                } else {
+                    val phrase = if (stopEvadeDirection == "Path blocked") "Path blocked." else "$stopEvadeDirection."
+                    return GuidanceOutput(phrase, isEmergency = true, priorityLevel = 3)
+                }
             }
-            return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1) // Halte still bis Bestätigung
+            return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
+        } else {
+            isStopActive = false
         }
 
         val stairsHazard = detections.firstOrNull { det ->
             val boxLeft = det.boundingBox.x
             val boxRight = det.boundingBox.x + det.boundingBox.width
             val floorY = det.boundingBox.y + det.boundingBox.height
-            det.className == "stairs" && (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT) && floorY > stairsFloorMin
+            det.className == "stairs" && (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY > stairsFloorMin
         }
 
         if (stairsHazard != null && isUserWalking) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
                 return GuidanceOutput("Caution, stairs ahead.", isEmergency = false, priorityLevel = 2)
             }
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
@@ -89,7 +131,7 @@ object GuidanceSynthesizer {
             if ((isRoadwayReliable || roadwayGroundCheck != null) && isUserWalking) {
                 hazardFrameCounter++
                 clearFrameCounter = 0
-                if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+                if (hazardFrameCounter >= config.hazardFramesRequired) {
                     return GuidanceOutput("Warning, roadway surface.", isEmergency = false, priorityLevel = 2)
                 }
                 return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
@@ -102,7 +144,7 @@ object GuidanceSynthesizer {
             val boxRight = det.boundingBox.x + det.boundingBox.width
             val floorY = det.boundingBox.y + det.boundingBox.height
 
-            val inCorridor = (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT)
+            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
             inCorridor && (floorY in personFloorMin..stopFloorThreshold)
         }
 
@@ -110,33 +152,40 @@ object GuidanceSynthesizer {
             hazardFrameCounter++
             clearFrameCounter = 0
 
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
-                val isLockExpired = (now - lastEvadeLockTime) > AppConfig.EVADE_LOCK_MS
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
+                val isLockExpired = (now - lastEvadeLockTime) > config.evadeLockMs
                 if (isLockExpired) {
-                    val pCx = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width / 2f
+                    val pLeft = corridorPerson.boundingBox.x
+                    val pRight = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width
+                    val pCx = pLeft + corridorPerson.boundingBox.width / 2f
+
+                    val personBlocksLeft = pLeft < 0.25f
+                    val personBlocksRight = pRight > 0.75f
                     val flankThreshold = 0.62f
 
-                    val hasObstacleLeft = detections.any {
+                    val hasObstacleLeft = personBlocksLeft || detections.any {
                         it != corridorPerson &&
                                 (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) < AppConfig.CORRIDOR_LEFT &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
                                 (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                     }
-                    val hasObstacleRight = detections.any {
+                    val hasObstacleRight = personBlocksRight || detections.any {
                         it != corridorPerson &&
                                 (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) > AppConfig.CORRIDOR_RIGHT &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
                                 (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                     }
 
                     lockedEvadeSide = when {
-                        !hasObstacleLeft && (hasObstacleRight || pCx >= 0.50f) -> "step left"
+                        !hasObstacleLeft && !hasObstacleRight -> if (pCx >= 0.50f) "step left" else "step right"
+                        !hasObstacleLeft -> "step left"
                         !hasObstacleRight -> "step right"
-                        else -> "step left"
+                        else -> "path blocked"
                     }
                     lastEvadeLockTime = now
                 }
-                return GuidanceOutput("Person ahead, $lockedEvadeSide.", isEmergency = false, priorityLevel = 2)
+                val phrase = if (lockedEvadeSide == "path blocked") "Person ahead, path blocked." else "Person ahead, $lockedEvadeSide."
+                return GuidanceOutput(phrase, isEmergency = false, priorityLevel = 2)
             }
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }
@@ -150,7 +199,7 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            val inCorridor = (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT)
+            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
             val inDistance = floorY in objectFloorMin..stopFloorThreshold || area > 0.10f
 
             inCorridor && inDistance
@@ -159,7 +208,7 @@ object GuidanceSynthesizer {
         if (vehicleHazard != null && isUserWalking) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val vehicleName = formatSpecificObjectName(vehicleHazard.className)
                 return GuidanceOutput("$vehicleName ahead.", isEmergency = false, priorityLevel = 2)
             }
@@ -174,20 +223,20 @@ object GuidanceSynthesizer {
 
             !isRoadwayIgnored &&
                     det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck") &&
-                    (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT) && floorY in objectFloorMin..stopFloorThreshold
+                    (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY in objectFloorMin..stopFloorThreshold
         }
 
         if (staticObstacle != null && isUserWalking) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val obstacleName = formatSpecificObjectName(staticObstacle.className)
                 return GuidanceOutput("$obstacleName ahead.", isEmergency = false, priorityLevel = 2)
             }
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }
 
-        hazardFrameCounter = 0 // Zurücksetzen, wenn Frame absolut sauber ist
+        hazardFrameCounter = 0
 
         val hasCloseProximityHazard = detections.any {
             it.className !in listOf("sidewalk", "path") &&
@@ -201,7 +250,7 @@ object GuidanceSynthesizer {
             clearFrameCounter = 0
         }
 
-        if (clearFrameCounter >= AppConfig.CLEAR_FRAMES_REQUIRED) {
+        if (clearFrameCounter >= config.clearFramesRequired) {
             lastEvadeLockTime = 0L
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }

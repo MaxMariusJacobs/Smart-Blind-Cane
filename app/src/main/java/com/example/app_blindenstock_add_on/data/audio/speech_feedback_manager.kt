@@ -16,12 +16,11 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
     private var lastSpokenTime = 0L
     private var lastSpokenPriority = 1
 
-    // Entprellung gegen Frame-Dropouts
     private var consecutiveClearFrames = 0
     private val requiredClearFrames = 8
 
     private val emergencyCooldownMs = 1200L
-    private val persistentWarningRepeatMs = 3500L // Wiederholt aktive Warnung alle 3.5s
+    private val persistentWarningRepeatMs = 3500L
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
@@ -58,9 +57,6 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
             consecutiveClearFrames = 0
         }
 
-        // =========================================================================
-        // REAKTION 1: KONTROLLIERTES "CLEAR"
-        // =========================================================================
         val isHazardClearing = (guidance.priorityLevel == 1) && (lastSpokenPriority >= 2)
 
         if (isHazardClearing) {
@@ -80,32 +76,27 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
             return false
         }
 
-        // Wenn "Clear" der aktuelle Status ist und "Clear" bereits der alte Status war -> Stumm bleiben.
         if (guidance.priorityLevel == 1 && lastSpokenPriority == 1) {
             return false
         }
 
-        // =========================================================================
-        // REAKTION 2: NOTFALL & WARNUNGEN
-        // =========================================================================
         val isEmergencyEscalation = guidance.priorityLevel == 3 && lastSpokenPriority < 3
 
         if (tts?.isSpeaking == true && !isEmergencyEscalation) {
             return false
         }
 
-        // Richtungswechsel erkennen
-        val isDirectionChange = (guidance.phrase.contains("step left") && lastSpokenPhrase.contains("step right")) ||
-                (guidance.phrase.contains("step right") && lastSpokenPhrase.contains("step left"))
+        // Richtungswechsel generisch erkennen (left vs right)
+        val isDirectionChange = (guidance.phrase.contains("left", ignoreCase = true) && lastSpokenPhrase.contains("right", ignoreCase = true)) ||
+                (guidance.phrase.contains("right", ignoreCase = true) && lastSpokenPhrase.contains("left", ignoreCase = true))
 
         val isSameOrSimilar = isSimilarOrSame(guidance.phrase, lastSpokenPhrase)
 
-        // Mindestabstand berechnen
         val requiredInterval = when {
             isEmergencyEscalation -> emergencyCooldownMs
-            isDirectionChange -> 1400L // Richtungsanpassung sofort nach Ausreden der alten Phrase
-            isSameOrSimilar -> persistentWarningRepeatMs // Gleiche Warnung alle 3.5s wiederholen
-            else -> 2200L
+            isDirectionChange -> 1400L
+            isSameOrSimilar -> persistentWarningRepeatMs
+            else -> 2200L // 2.2 Sekunden Standard-Pause zwischen unterschiedlichen Kommandos (z.B. Stop -> Turn left)
         }
 
         if (elapsed < requiredInterval && !isEmergencyEscalation) {
@@ -129,10 +120,10 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
         val cleanOld = oldPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
 
         // Gegensätzliche Richtungen dürfen NIEMALS als ähnlich gelten
-        val newHasLeft = cleanNew.contains("step left")
-        val oldHasLeft = cleanOld.contains("step left")
-        val newHasRight = cleanNew.contains("step right")
-        val oldHasRight = cleanOld.contains("step right")
+        val newHasLeft = cleanNew.contains("left")
+        val oldHasLeft = cleanOld.contains("left")
+        val newHasRight = cleanNew.contains("right")
+        val oldHasRight = cleanOld.contains("right")
         if ((newHasLeft && oldHasRight) || (newHasRight && oldHasLeft)) {
             return false
         }

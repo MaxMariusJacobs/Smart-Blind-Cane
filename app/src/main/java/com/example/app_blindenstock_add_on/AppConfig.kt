@@ -1,32 +1,42 @@
 package com.example.app_blindenstock_add_on
 
-object AppConfig {
+import kotlinx.coroutines.flow.MutableStateFlow
 
-    // Geh-Korridor einstellen
-    const val CORRIDOR_LEFT = 0.32f  // Höher = Korridor schmaler, Tiefer = breiter
-    const val CORRIDOR_RIGHT = 0.68f // Tiefer = Korridor schmaler, Höher = breiter
+data class AppConfigState(
+    // Geh-Korridor
+    val corridorLeft: Float = 0.32f,
+    val corridorRight: Float = 0.68f,
 
     // Warnabstände für interne Smartphone-Kamera
-    const val STOP_FLOOR_PHONE = 0.85f   // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
-    const val PERSON_FLOOR_PHONE = 0.45f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val OBJECT_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val STAIRS_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    val stopFloorPhone: Float = 0.85f,
+    val personFloorPhone: Float = 0.45f,
+    val objectFloorPhone: Float = 0.50f,
+    val stairsFloorPhone: Float = 0.50f,
 
     // Warnabstände für ESP32-Kamera
-    const val STOP_FLOOR_ESP = 0.84f     // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
-    const val PERSON_FLOOR_ESP = 0.62f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val OBJECT_FLOOR_ESP = 0.64f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val STAIRS_FLOOR_ESP = 0.62f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    val stopFloorEsp: Float = 0.84f,
+    val personFloorEsp: Float = 0.62f,
+    val objectFloorEsp: Float = 0.64f,
+    val stairsFloorEsp: Float = 0.62f,
 
     // KI-Erkennungs-Schwellenwerte
-    const val CONF_THRESHOLD_OBJECTS = 0.40f // Höher = Weniger falsche Objekte, übersieht aber evtl. echte
-    const val CONF_THRESHOLD_SURFACE = 0.50f // Höher = Strengere Bodenerkennung, weniger Fehler
-    const val NMS_IOU_THRESHOLD = 0.40f      // Tiefer = Löscht überlappende Boxen aggressiver, Höher = erlaubt mehr Boxen übereinander
+    val confThresholdObjects: Float = 0.40f,
+    val confThresholdSurface: Float = 0.50f,
+    val nmsIouThreshold: Float = 0.40f,
 
     // Frame-Filter (Entprellung)
-    const val HAZARD_FRAMES_REQUIRED = 3      // Höher = Robuster gegen falsche Warnungen, Tiefer = Löst schneller aus
-    const val CLEAR_FRAMES_REQUIRED = 6       // Tiefer = Gibt schneller Entwarnung, Höher = robuster gegen falsche Entwarnungen
+    val hazardFramesRequired: Int = 3,
+    val clearFramesRequired: Int = 6,
 
-    const val EVADE_LOCK_MS = 3500L           // Tiefer = Wechselt Ausweichrichtung schneller, Höher = Richtung bleibt länger stabil
-    const val TREND_GROWTH_PER_SEC = 0.15f    // Tiefer = Löst bei langsamer Annäherung aus, Höher = Löst nur bei schneller Annäherung aus
+    // Dynamik & Logik
+    val evadeLockMs: Long = 3500L,
+    val trendGrowthPerSec: Float = 0.15f
+)
+
+object AppConfig {
+    val currentState = MutableStateFlow(AppConfigState())
+
+    fun update(newState: AppConfigState) {
+        currentState.value = newState
+    }
 }

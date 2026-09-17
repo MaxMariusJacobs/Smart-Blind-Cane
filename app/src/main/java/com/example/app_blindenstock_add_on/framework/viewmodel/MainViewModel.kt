@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.app_blindenstock_add_on.AppConfig
 import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
 import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
 import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
@@ -39,7 +40,8 @@ data class MainUiState(
     val isRoadwayAlertsEnabled: Boolean = false,
     val detectionLogs: List<String> = emptyList(),
     val errorMessage: String? = null,
-    val streamUrl: String = "http://192.168.4.1/stream",
+    val streamUrl: String = "", // <--- Startet jetzt immer leer
+    val savedUrls: List<String> = emptyList(), // <--- NEU: Speichert bis zu 3 Adressen
     val sourceType: SourceType = SourceType.MJPEG,
     val isStreaming: Boolean = false,
     val isBackgroundRunning: Boolean = false,
@@ -96,25 +98,46 @@ class MainViewModel : ViewModel() {
 
     fun loadUrl(context: Context) {
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-        val saved = prefs.getString("stream_url", "http://192.168.4.1/stream") ?: "http://192.168.4.1/stream"
-        _uiState.value = _uiState.value.copy(streamUrl = saved)
+        val savedString = prefs.getString("saved_urls", "") ?: ""
+        val urls = savedString.split(",").filter { it.isNotBlank() }
+
+        _uiState.value = _uiState.value.copy(
+            streamUrl = "", // Bewusst leer lassen beim Start
+            savedUrls = urls
+        )
     }
 
     fun saveUrl(context: Context, url: String) {
+        if (url.isBlank()) return
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("stream_url", url).apply()
-        _uiState.value = _uiState.value.copy(streamUrl = url)
+
+        val currentUrls = _uiState.value.savedUrls.toMutableList()
+        currentUrls.remove(url) // Duplikat entfernen, falls schon vorhanden
+        currentUrls.add(0, url) // Als neueste an Position 1 setzen
+        val trimmedUrls = currentUrls.take(3) // Nur die letzten 3 behalten
+
+        prefs.edit().putString("saved_urls", trimmedUrls.joinToString(",")).apply()
+
+        _uiState.value = _uiState.value.copy(
+            streamUrl = url,
+            savedUrls = trimmedUrls
+        )
     }
 
     fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
         if (_uiState.value.isStreaming) return
+
+        val urlToUse = _uiState.value.streamUrl
+        if (_uiState.value.sourceType == SourceType.MJPEG && urlToUse.isBlank()) {
+            _uiState.value = _uiState.value.copy(errorMessage = "Please enter or select a network address")
+            return
+        }
 
         val serviceIntent = Intent(context, AppForegroundService::class.java)
         context.stopService(serviceIntent)
         _uiState.value = _uiState.value.copy(isBackgroundRunning = false)
 
         val type = _uiState.value.sourceType
-        val url = _uiState.value.streamUrl
         val isEspMode = (type == SourceType.MJPEG)
 
         fpsCounter = 0
@@ -129,7 +152,7 @@ class MainViewModel : ViewModel() {
             motionTracker = UserMotionTracker(context).apply { start() }
 
             videoSource = when (type) {
-                SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url) { message ->
+                SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), urlToUse) { message ->
                     speechManager?.speakUrgent(message)
                 }
                 SourceType.CAMERA -> {
@@ -154,14 +177,17 @@ class MainViewModel : ViewModel() {
                         }
 
                         val isWalking = motionTracker?.isUserWalking ?: false
-                        val result = detector?.detect(bitmap, isWalking) ?: return@collect
+                        val currentConfig = AppConfig.currentState.value
+
+                        val result = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
                         val infTime = detector?.lastInferenceTime ?: 0L
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = result,
                             isUserWalking = isWalking,
                             allowRoadwayAlerts = _uiState.value.isRoadwayAlertsEnabled,
-                            isEsp32 = isEspMode
+                            isEsp32 = isEspMode,
+                            config = currentConfig
                         )
                         val wasSpoken = speechManager?.processGuidance(guidance) ?: false
 
@@ -206,7 +232,6 @@ class MainViewModel : ViewModel() {
 
         _uiState.value = _uiState.value.copy(isStreaming = false, currentFrame = null, detections = emptyList())
 
-        // Blockierendes Zerstören der Objekte vom Main-Thread fernhalten (verhindert ANR)
         viewModelScope.launch(Dispatchers.IO) {
             vs?.stop()
             mt?.stop()
@@ -218,5 +243,55 @@ class MainViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         stopStream()
+    }
+
+    fun saveTuningConfig(context: Context) {
+        val prefs = context.getSharedPreferences("tuning_prefs", Context.MODE_PRIVATE)
+        val s = com.example.app_blindenstock_add_on.AppConfig.currentState.value
+        prefs.edit().apply {
+            putFloat("corridorLeft", s.corridorLeft)
+            putFloat("corridorRight", s.corridorRight)
+            putFloat("stopFloorPhone", s.stopFloorPhone)
+            putFloat("personFloorPhone", s.personFloorPhone)
+            putFloat("objectFloorPhone", s.objectFloorPhone)
+            putFloat("stairsFloorPhone", s.stairsFloorPhone)
+            putFloat("stopFloorEsp", s.stopFloorEsp)
+            putFloat("personFloorEsp", s.personFloorEsp)
+            putFloat("objectFloorEsp", s.objectFloorEsp)
+            putFloat("stairsFloorEsp", s.stairsFloorEsp)
+            putFloat("confThresholdObjects", s.confThresholdObjects)
+            putFloat("confThresholdSurface", s.confThresholdSurface)
+            putFloat("nmsIouThreshold", s.nmsIouThreshold)
+            putInt("hazardFramesRequired", s.hazardFramesRequired)
+            putInt("clearFramesRequired", s.clearFramesRequired)
+        }.apply()
+    }
+
+    fun loadTuningConfig(context: Context) {
+        val prefs = context.getSharedPreferences("tuning_prefs", Context.MODE_PRIVATE)
+        if (!prefs.contains("corridorLeft")) return
+
+        val loaded = com.example.app_blindenstock_add_on.AppConfigState(
+            corridorLeft = prefs.getFloat("corridorLeft", 0.32f),
+            corridorRight = prefs.getFloat("corridorRight", 0.68f),
+            stopFloorPhone = prefs.getFloat("stopFloorPhone", 0.85f),
+            personFloorPhone = prefs.getFloat("personFloorPhone", 0.45f),
+            objectFloorPhone = prefs.getFloat("objectFloorPhone", 0.50f),
+            stairsFloorPhone = prefs.getFloat("stairsFloorPhone", 0.50f),
+            stopFloorEsp = prefs.getFloat("stopFloorEsp", 0.84f),
+            personFloorEsp = prefs.getFloat("personFloorEsp", 0.62f),
+            objectFloorEsp = prefs.getFloat("objectFloorEsp", 0.64f),
+            stairsFloorEsp = prefs.getFloat("stairsFloorEsp", 0.62f),
+            confThresholdObjects = prefs.getFloat("confThresholdObjects", 0.40f),
+            confThresholdSurface = prefs.getFloat("confThresholdSurface", 0.50f),
+            nmsIouThreshold = prefs.getFloat("nmsIouThreshold", 0.40f),
+            hazardFramesRequired = prefs.getInt("hazardFramesRequired", 3),
+            clearFramesRequired = prefs.getInt("clearFramesRequired", 6)
+        )
+        com.example.app_blindenstock_add_on.AppConfig.update(loaded)
+    }
+
+    fun resetTuningConfig() {
+        com.example.app_blindenstock_add_on.AppConfig.update(com.example.app_blindenstock_add_on.AppConfigState())
     }
 }

@@ -899,25 +899,6 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 </file>
 
-<file path=".gitignore">
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
-repomix-output.*
-</file>
-
 <file path="build.gradle.kts">
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
@@ -1479,166 +1460,6 @@ model = YOLO("yolov8n.pt")
 model.export(format="onnx", imgsz=640, optimize=True)
 </file>
 
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/audio/speech_feedback_manager.kt">
-package com.example.app_blindenstock_add_on.data.audio
-
-import android.content.Context
-import android.media.AudioAttributes
-import android.speech.tts.TextToSpeech
-import android.util.Log
-import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer.GuidanceOutput
-import java.util.Locale
-
-class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
-
-    private var tts: TextToSpeech? = TextToSpeech(context, this)
-    private var isInitialized = false
-
-    private var lastSpokenPhrase = ""
-    private var lastSpokenTime = 0L
-    private var lastSpokenPriority = 1
-
-    // Entprellung gegen Frame-Dropouts
-    private var consecutiveClearFrames = 0
-    private val requiredClearFrames = 8
-
-    private val emergencyCooldownMs = 1200L
-    private val persistentWarningRepeatMs = 3500L // Wiederholt aktive Warnung alle 3.5s
-
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.let { engine ->
-                val result = engine.setLanguage(Locale.US)
-                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    engine.language = Locale.ENGLISH
-                }
-                engine.setSpeechRate(1.20f)
-
-                val audioAttributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-                engine.setAudioAttributes(audioAttributes)
-
-                isInitialized = true
-                Log.d("SpeechFeedbackManager", "TTS ready on Media Channel.")
-            }
-        } else {
-            Log.e("SpeechFeedbackManager", "TTS initialization failed: $status")
-        }
-    }
-
-    fun processGuidance(guidance: GuidanceOutput): Boolean {
-        if (!isInitialized) return false
-
-        val now = System.currentTimeMillis()
-        val elapsed = now - lastSpokenTime
-
-        if (guidance.priorityLevel == 1) {
-            consecutiveClearFrames++
-        } else {
-            consecutiveClearFrames = 0
-        }
-
-        // =========================================================================
-        // REAKTION 1: KONTROLLIERTES "CLEAR"
-        // =========================================================================
-        val isHazardClearing = (guidance.priorityLevel == 1) && (lastSpokenPriority >= 2)
-
-        if (isHazardClearing) {
-            val minPlayTimeMs = if (lastSpokenPriority == 3) 700L else 1400L
-            val isAudioFinished = (tts?.isSpeaking != true) && (elapsed >= minPlayTimeMs)
-            val isStableClear = consecutiveClearFrames >= requiredClearFrames
-
-            if (isAudioFinished && isStableClear) {
-                lastSpokenPhrase = "Clear"
-                lastSpokenTime = now
-                lastSpokenPriority = 1
-                consecutiveClearFrames = 0
-
-                tts?.speak("Clear", TextToSpeech.QUEUE_FLUSH, null, "CLEAR_CONFIRMED")
-                return true
-            }
-            return false
-        }
-
-        // Wenn "Clear" der aktuelle Status ist und "Clear" bereits der alte Status war -> Stumm bleiben.
-        if (guidance.priorityLevel == 1 && lastSpokenPriority == 1) {
-            return false
-        }
-
-        // =========================================================================
-        // REAKTION 2: NOTFALL & WARNUNGEN
-        // =========================================================================
-        val isEmergencyEscalation = guidance.priorityLevel == 3 && lastSpokenPriority < 3
-
-        if (tts?.isSpeaking == true && !isEmergencyEscalation) {
-            return false
-        }
-
-        // Richtungswechsel erkennen
-        val isDirectionChange = (guidance.phrase.contains("step left") && lastSpokenPhrase.contains("step right")) ||
-                (guidance.phrase.contains("step right") && lastSpokenPhrase.contains("step left"))
-
-        val isSameOrSimilar = isSimilarOrSame(guidance.phrase, lastSpokenPhrase)
-
-        // Mindestabstand berechnen
-        val requiredInterval = when {
-            isEmergencyEscalation -> emergencyCooldownMs
-            isDirectionChange -> 1400L // Richtungsanpassung sofort nach Ausreden der alten Phrase
-            isSameOrSimilar -> persistentWarningRepeatMs // Gleiche Warnung alle 3.5s wiederholen
-            else -> 2200L
-        }
-
-        if (elapsed < requiredInterval && !isEmergencyEscalation) {
-            return false
-        }
-
-        lastSpokenPhrase = guidance.phrase
-        lastSpokenTime = now
-        lastSpokenPriority = guidance.priorityLevel
-
-        tts?.speak(guidance.phrase, TextToSpeech.QUEUE_FLUSH, null, "GUIDANCE_UTTERANCE")
-        Log.d("SpeechFeedbackManager", "Spoken: ${guidance.phrase}")
-        return true
-    }
-
-    private fun isSimilarOrSame(newPhrase: String, oldPhrase: String): Boolean {
-        if (oldPhrase.isBlank()) return false
-        if (newPhrase.equals(oldPhrase, ignoreCase = true)) return true
-
-        val cleanNew = newPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
-        val cleanOld = oldPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
-
-        // Gegensätzliche Richtungen dürfen NIEMALS als ähnlich gelten
-        val newHasLeft = cleanNew.contains("step left")
-        val oldHasLeft = cleanOld.contains("step left")
-        val newHasRight = cleanNew.contains("step right")
-        val oldHasRight = cleanOld.contains("step right")
-        if ((newHasLeft && oldHasRight) || (newHasRight && oldHasLeft)) {
-            return false
-        }
-
-        val wordsNew = cleanNew.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
-        val wordsOld = cleanOld.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
-
-        if (wordsNew.isEmpty() || wordsOld.isEmpty()) return false
-
-        val intersection = wordsNew.intersect(wordsOld).size
-        val union = wordsNew.union(wordsOld).size
-
-        return (intersection.toFloat() / union.toFloat()) >= 0.75f
-    }
-
-    fun shutdown() {
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
-        isInitialized = false
-    }
-}
-</file>
-
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/data/sensor/UserMotion.kt">
 package com.example.app_blindenstock_add_on.data.sensor
 
@@ -1709,345 +1530,6 @@ class UserMotionTracker(context: Context) : SensorEventListener {
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-}
-</file>
-
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/MjpegStreamer.kt">
-package com.example.app_blindenstock_add_on.data.video
-
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.Log
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.isActive
-import okhttp3.Call
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
-import java.io.IOException
-import java.io.InputStream
-import java.util.concurrent.TimeUnit
-
-class MjpegStreamer(
-    private val client: OkHttpClient,
-    private val url: String
-) : VideoSource {
-
-    @Volatile
-    private var activeCall: Call? = null
-
-    private val streamClient = client.newBuilder()
-        .connectTimeout(4, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
-
-    private val decodeOptions = BitmapFactory.Options().apply {
-        inSampleSize = 2
-        inPreferredConfig = Bitmap.Config.RGB_565
-    }
-
-    override fun getFrames(): Flow<Bitmap> = flow {
-        val request = Request.Builder()
-            .url(url)
-            .header("Cache-Control", "no-cache")
-            .header("Connection", "keep-alive")
-            .build()
-
-        val call = streamClient.newCall(request)
-        activeCall = call
-
-        val response = try {
-            call.execute()
-        } catch (e: Exception) {
-            Log.e("MjpegStreamer", "Verbindung zu $url fehlgeschlagen: ${e.message}")
-            return@flow
-        }
-
-        if (!response.isSuccessful) {
-            Log.e("MjpegStreamer", "HTTP-Fehler: ${response.code}")
-            response.close()
-            return@flow
-        }
-
-        val body = response.body
-        if (body == null) {
-            response.close()
-            return@flow
-        }
-
-        val bufferedInput = BufferedInputStream(body.byteStream(), 65536)
-
-        try {
-            while (true) {
-                // Deadlock-Schutz: Bricht sofort ab, wenn UI den Job stoppt
-                if (!currentCoroutineContext().isActive) break
-
-                val frameBytes = readJpegFrame(bufferedInput) ?: break
-                val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
-                if (bitmap != null) {
-                    emit(bitmap)
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("MjpegStreamer", "Stream getrennt: ${e.message}")
-        } finally {
-            response.close()
-            activeCall = null
-        }
-    }.flowOn(Dispatchers.IO)
-
-    override fun stop() {
-        try {
-            activeCall?.cancel()
-        } catch (e: Exception) {
-            Log.w("MjpegStreamer", "Fehler beim Stoppen: ${e.message}")
-        }
-        activeCall = null
-    }
-
-    private fun readJpegFrame(stream: InputStream): ByteArray? {
-        val buffer = ByteArrayOutputStream(32768)
-        var prevByte = -1
-        var inFrame = false
-
-        while (true) {
-            val currByte = stream.read()
-            if (currByte == -1) return null
-
-            if (!inFrame) {
-                if (prevByte == 0xFF && currByte == 0xD8) {
-                    inFrame = true
-                    buffer.write(prevByte)
-                    buffer.write(currByte)
-                }
-            } else {
-                buffer.write(currByte)
-                if (prevByte == 0xFF && currByte == 0xD9) {
-                    return buffer.toByteArray()
-                }
-            }
-            prevByte = currByte
-        }
-    }
-}
-</file>
-
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/system_services/AppForegroundService.kt">
-package com.example.app_blindenstock_add_on.framework.system_services
-
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
-import android.content.Context
-import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.net.wifi.WifiManager
-import android.os.Build
-import android.os.IBinder
-import android.os.PowerManager
-import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
-import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
-import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
-import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
-import com.example.app_blindenstock_add_on.data.video.VideoSource
-import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
-import com.example.app_blindenstock_add_on.domain.model.Detection
-import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
-
-data class ServiceMetrics(
-    val fps: Int = 0,
-    val inferenceTime: Long = 0,
-    val isWalking: Boolean = false,
-    val detectionCount: Int = 0,
-    val isRunning: Boolean = false,
-    val currentPhrase: String = "Clear",
-    val detections: List<Detection> = emptyList(),
-    val primarySurface: String = "unknown"
-)
-
-class AppForegroundService : Service(), LifecycleOwner {
-
-    private val lifecycleRegistry = LifecycleRegistry(this)
-    override val lifecycle: Lifecycle get() = lifecycleRegistry
-
-    private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
-
-    private var videoSource: VideoSource? = null
-    private var detector: YoloDetector? = null
-    private var motionTracker: UserMotionTracker? = null
-    private var speechManager: SpeechFeedbackManager? = null
-
-    private var wakeLock: PowerManager.WakeLock? = null
-    private var wifiLock: WifiManager.WifiLock? = null
-
-    private var fpsCounter = 0
-    private var fpsWindowStart = 0L
-    private var smoothedFps = 0
-
-    companion object {
-        private const val CHANNEL_ID = "AppForegroundServiceChannel"
-        private const val NOTIFICATION_ID = 1
-
-        @Volatile
-        var allowRoadwayAlerts: Boolean = false
-
-        private val _metrics = MutableStateFlow(ServiceMetrics())
-        val metrics: StateFlow<ServiceMetrics> = _metrics.asStateFlow()
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        lifecycleRegistry.currentState = Lifecycle.State.CREATED
-        createNotificationChannel()
-
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AppForegroundService::CpuLock")
-
-        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "AppForegroundService::WifiLock")
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        lifecycleRegistry.currentState = Lifecycle.State.STARTED
-        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
-
-        if (wakeLock?.isHeld != true) wakeLock?.acquire(10 * 60 * 60 * 1000L)
-        if (wifiLock?.isHeld != true) wifiLock?.acquire()
-
-        val sourceType = intent?.getStringExtra("EXTRA_SOURCE_TYPE") ?: "MJPEG"
-        val url = intent?.getStringExtra("EXTRA_STREAM_URL") ?: "http://192.168.4.1/stream"
-        if (intent?.hasExtra("EXTRA_ALLOW_ROADWAY") == true) {
-            allowRoadwayAlerts = intent.getBooleanExtra("EXTRA_ALLOW_ROADWAY", false)
-        }
-
-        val isEspMode = (sourceType != "CAMERA")
-
-        try {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-            _metrics.value = _metrics.value.copy(isRunning = true)
-        } catch (e: Exception) {
-            android.util.Log.e("AppForegroundService", "Start-Fehler: ${e.message}", e)
-        }
-
-        fpsCounter = 0
-        fpsWindowStart = System.currentTimeMillis()
-        smoothedFps = 0
-
-        serviceScope.launch {
-            try {
-                // ANR-Schutz: Vollständige Instanziierung im Background Thread
-                detector = YoloDetector(this@AppForegroundService)
-                motionTracker = UserMotionTracker(this@AppForegroundService).apply { start() }
-                speechManager = SpeechFeedbackManager(this@AppForegroundService)
-
-                videoSource = if (sourceType == "CAMERA") {
-                    LocalCameraSource(this@AppForegroundService, this@AppForegroundService)
-                } else {
-                    MjpegStreamer(OkHttpClient(), url)
-                }
-
-                videoSource?.getFrames()
-                    ?.conflate()
-                    ?.collect { bitmap ->
-                        val currentTime = System.currentTimeMillis()
-
-                        fpsCounter++
-                        val elapsed = currentTime - fpsWindowStart
-                        if (elapsed >= 1000L) {
-                            smoothedFps = ((fpsCounter * 1000L) / elapsed).toInt()
-                            fpsCounter = 0
-                            fpsWindowStart = currentTime
-                        }
-
-                        val isWalking = motionTracker?.isUserWalking ?: false
-                        val analysisResult = detector?.detect(bitmap, isWalking) ?: return@collect
-
-                        val guidance = GuidanceSynthesizer.synthesize(
-                            result = analysisResult,
-                            isUserWalking = isWalking,
-                            allowRoadwayAlerts = allowRoadwayAlerts,
-                            isEsp32 = isEspMode
-                        )
-                        speechManager?.processGuidance(guidance)
-
-                        _metrics.value = ServiceMetrics(
-                            fps = smoothedFps,
-                            inferenceTime = detector?.lastInferenceTime ?: 0L,
-                            isWalking = isWalking,
-                            detectionCount = analysisResult.detections.size,
-                            isRunning = true,
-                            currentPhrase = guidance.phrase,
-                            detections = analysisResult.detections,
-                            primarySurface = analysisResult.primarySurface
-                        )
-                    }
-            } catch (e: Exception) {
-                android.util.Log.e("AppForegroundService", "Pipeline-Fehler: ${e.message}", e)
-            }
-        }
-
-        return START_STICKY
-    }
-
-    override fun onDestroy() {
-        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
-        super.onDestroy()
-        videoSource?.stop()
-        videoSource = null
-        motionTracker?.stop()
-        motionTracker = null
-        speechManager?.shutdown()
-        speechManager = null
-        detector?.close()
-        detector = null
-
-        if (wifiLock?.isHeld == true) wifiLock?.release()
-        if (wakeLock?.isHeld == true) wakeLock?.release()
-
-        _metrics.value = ServiceMetrics(isRunning = false)
-        serviceJob.cancel()
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Smart Cane Active")
-            .setContentText("Background environment tracking is running.")
-            .setSmallIcon(android.R.drawable.ic_menu_info_details)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .build()
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val serviceChannel = NotificationChannel(CHANNEL_ID, "App Assistance Service", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java)?.createNotificationChannel(serviceChannel)
-        }
-    }
 }
 </file>
 
@@ -2358,234 +1840,30 @@ fun CameraScreen(viewModel: MainViewModel) {
 }
 </file>
 
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/viewmodel/MainViewModel.kt">
-package com.example.app_blindenstock_add_on.framework.viewmodel
-
-import android.content.Context
-import android.content.Intent
-import android.graphics.Bitmap
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
-import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
-import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
-import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
-import com.example.app_blindenstock_add_on.data.video.VideoSource
-import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
-import com.example.app_blindenstock_add_on.domain.model.CorridorAnalysis
-import com.example.app_blindenstock_add_on.domain.model.Detection
-import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
-import com.example.app_blindenstock_add_on.framework.system_services.AppForegroundService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-enum class AppScreen { START, CAMERA }
-enum class SourceType { MJPEG, CAMERA }
-
-data class MainUiState(
-    val currentScreen: AppScreen = AppScreen.START,
-    val currentFrame: Bitmap? = null,
-    val detections: List<Detection> = emptyList(),
-    val corridor: CorridorAnalysis = CorridorAnalysis(),
-    val primarySurface: String = "unknown",
-    val currentGuidancePhrase: String = "Clear",
-    val isRoadwayAlertsEnabled: Boolean = false,
-    val detectionLogs: List<String> = emptyList(),
-    val errorMessage: String? = null,
-    val streamUrl: String = "http://192.168.4.1/stream",
-    val sourceType: SourceType = SourceType.MJPEG,
-    val isStreaming: Boolean = false,
-    val isBackgroundRunning: Boolean = false,
-    val isUserWalking: Boolean = false,
-    val inferenceTime: Long = 0,
-    val currentFps: Int = 0
-)
-
-class MainViewModel : ViewModel() {
-
-    private val _uiState = MutableStateFlow(MainUiState())
-    val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
-
-    private var streamJob: Job? = null
-    private var videoSource: VideoSource? = null
-    private var detector: YoloDetector? = null
-    private var motionTracker: UserMotionTracker? = null
-    private var speechManager: SpeechFeedbackManager? = null
-
-    private var fpsCounter = 0
-    private var fpsWindowStart = 0L
-    private var smoothedFps = 0
-
-    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
-
-    init {
-        viewModelScope.launch {
-            AppForegroundService.metrics.collect { metrics ->
-                if (_uiState.value.isBackgroundRunning || metrics.isRunning) {
-                    _uiState.value = _uiState.value.copy(
-                        isBackgroundRunning = metrics.isRunning,
-                        currentFps = metrics.fps,
-                        inferenceTime = metrics.inferenceTime,
-                        isUserWalking = metrics.isWalking,
-                        currentGuidancePhrase = metrics.currentPhrase,
-                        detections = metrics.detections,
-                        primarySurface = metrics.primarySurface
-                    )
-                }
-            }
-        }
-    }
-
-    fun navigateTo(screen: AppScreen) { _uiState.value = _uiState.value.copy(currentScreen = screen) }
-    fun updateUrl(newUrl: String) { _uiState.value = _uiState.value.copy(streamUrl = newUrl) }
-    fun updateSourceType(type: SourceType) { _uiState.value = _uiState.value.copy(sourceType = type) }
-    fun setBackgroundRunning(running: Boolean) { _uiState.value = _uiState.value.copy(isBackgroundRunning = running) }
-
-    fun toggleRoadwayAlerts() {
-        val next = !_uiState.value.isRoadwayAlertsEnabled
-        _uiState.value = _uiState.value.copy(isRoadwayAlertsEnabled = next)
-        AppForegroundService.allowRoadwayAlerts = next
-    }
-
-    fun loadUrl(context: Context) {
-        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-        val saved = prefs.getString("stream_url", "http://192.168.4.1/stream") ?: "http://192.168.4.1/stream"
-        _uiState.value = _uiState.value.copy(streamUrl = saved)
-    }
-
-    fun saveUrl(context: Context, url: String) {
-        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("stream_url", url).apply()
-        _uiState.value = _uiState.value.copy(streamUrl = url)
-    }
-
-    fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        if (_uiState.value.isStreaming) return
-
-        val serviceIntent = Intent(context, AppForegroundService::class.java)
-        context.stopService(serviceIntent)
-        _uiState.value = _uiState.value.copy(isBackgroundRunning = false)
-
-        val type = _uiState.value.sourceType
-        val url = _uiState.value.streamUrl
-        val isEspMode = (type == SourceType.MJPEG)
-
-        fpsCounter = 0
-        fpsWindowStart = System.currentTimeMillis()
-        smoothedFps = 0
-
-        _uiState.value = _uiState.value.copy(isStreaming = true)
-
-        streamJob = viewModelScope.launch(Dispatchers.Default) {
-            detector = YoloDetector(context)
-            speechManager = SpeechFeedbackManager(context)
-            motionTracker = UserMotionTracker(context).apply { start() }
-
-            videoSource = when (type) {
-                SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url)
-                SourceType.CAMERA -> {
-                    val activity = context as? androidx.activity.ComponentActivity
-                        ?: throw IllegalStateException("Context must be a ComponentActivity")
-                    LocalCameraSource(context, activity)
-                }
-            }
-
-            try {
-                videoSource?.getFrames()
-                    ?.conflate()
-                    ?.collect { bitmap ->
-                        val currentTime = System.currentTimeMillis()
-
-                        fpsCounter++
-                        val elapsed = currentTime - fpsWindowStart
-                        if (elapsed >= 1000L) {
-                            smoothedFps = ((fpsCounter * 1000L) / elapsed).toInt()
-                            fpsCounter = 0
-                            fpsWindowStart = currentTime
-                        }
-
-                        val isWalking = motionTracker?.isUserWalking ?: false
-                        val result = detector?.detect(bitmap, isWalking) ?: return@collect
-                        val infTime = detector?.lastInferenceTime ?: 0L
-
-                        val guidance = GuidanceSynthesizer.synthesize(
-                            result = result,
-                            isUserWalking = isWalking,
-                            allowRoadwayAlerts = _uiState.value.isRoadwayAlertsEnabled,
-                            isEsp32 = isEspMode
-                        )
-                        val wasSpoken = speechManager?.processGuidance(guidance) ?: false
-
-                        val updatedLogs = if (wasSpoken) {
-                            val logEntry = "[${timeFormat.format(Date(currentTime))}] ${guidance.phrase}"
-                            (listOf(logEntry) + _uiState.value.detectionLogs).take(30)
-                        } else {
-                            _uiState.value.detectionLogs
-                        }
-
-                        _uiState.value = _uiState.value.copy(
-                            currentFrame = bitmap,
-                            detections = result.detections,
-                            primarySurface = result.primarySurface,
-                            currentGuidancePhrase = guidance.phrase,
-                            detectionLogs = updatedLogs,
-                            inferenceTime = infTime,
-                            currentFps = smoothedFps,
-                            isUserWalking = isWalking
-                        )
-                    }
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Stream error: ${e.message}", e)
-                _uiState.value = _uiState.value.copy(isStreaming = false, errorMessage = e.message)
-            }
-        }
-    }
-
-    fun stopStream() {
-        streamJob?.cancel()
-        streamJob = null
-
-        val vs = videoSource
-        val mt = motionTracker
-        val sm = speechManager
-        val det = detector
-
-        videoSource = null
-        motionTracker = null
-        speechManager = null
-        detector = null
-
-        _uiState.value = _uiState.value.copy(isStreaming = false, currentFrame = null, detections = emptyList())
-
-        // Blockierendes Zerstören der Objekte vom Main-Thread fernhalten (verhindert ANR)
-        viewModelScope.launch(Dispatchers.IO) {
-            vs?.stop()
-            mt?.stop()
-            sm?.shutdown()
-            det?.close()
-        }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        stopStream()
-    }
-}
-</file>
-
 <file path="app/src/main/res/values/strings.xml">
 <resources>
     <string name="app_name">Smart-Blind-Cane</string>
     <string name="fgs_special_use_justification">The app needs to run a foreground service to provide assistance to blind people even when the app is in the background.</string>
 </resources>
+</file>
+
+<file path=".gitignore">
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+repomix-output.*
 </file>
 
 <file path="settings.gradle.kts">
@@ -2617,6 +1895,307 @@ rootProject.name = "Smart-Blind-Cane"
 include(":app")
 </file>
 
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/audio/speech_feedback_manager.kt">
+package com.example.app_blindenstock_add_on.data.audio
+
+import android.content.Context
+import android.media.AudioAttributes
+import android.speech.tts.TextToSpeech
+import android.util.Log
+import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer.GuidanceOutput
+import java.util.Locale
+
+class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
+
+    private var tts: TextToSpeech? = TextToSpeech(context, this)
+    private var isInitialized = false
+
+    private var lastSpokenPhrase = ""
+    private var lastSpokenTime = 0L
+    private var lastSpokenPriority = 1
+
+    private var consecutiveClearFrames = 0
+    private val requiredClearFrames = 8
+
+    private val emergencyCooldownMs = 1200L
+    private val persistentWarningRepeatMs = 3500L
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.let { engine ->
+                val result = engine.setLanguage(Locale.US)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    engine.language = Locale.ENGLISH
+                }
+                engine.setSpeechRate(1.20f)
+
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                engine.setAudioAttributes(audioAttributes)
+
+                isInitialized = true
+                Log.d("SpeechFeedbackManager", "TTS ready on Media Channel.")
+            }
+        } else {
+            Log.e("SpeechFeedbackManager", "TTS initialization failed: $status")
+        }
+    }
+
+    fun processGuidance(guidance: GuidanceOutput): Boolean {
+        if (!isInitialized) return false
+
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastSpokenTime
+
+        if (guidance.priorityLevel == 1) {
+            consecutiveClearFrames++
+        } else {
+            consecutiveClearFrames = 0
+        }
+
+        val isHazardClearing = (guidance.priorityLevel == 1) && (lastSpokenPriority >= 2)
+
+        if (isHazardClearing) {
+            val minPlayTimeMs = if (lastSpokenPriority == 3) 700L else 1400L
+            val isAudioFinished = (tts?.isSpeaking != true) && (elapsed >= minPlayTimeMs)
+            val isStableClear = consecutiveClearFrames >= requiredClearFrames
+
+            if (isAudioFinished && isStableClear) {
+                lastSpokenPhrase = "Clear"
+                lastSpokenTime = now
+                lastSpokenPriority = 1
+                consecutiveClearFrames = 0
+
+                tts?.speak("Clear", TextToSpeech.QUEUE_FLUSH, null, "CLEAR_CONFIRMED")
+                return true
+            }
+            return false
+        }
+
+        if (guidance.priorityLevel == 1 && lastSpokenPriority == 1) {
+            return false
+        }
+
+        val isEmergencyEscalation = guidance.priorityLevel == 3 && lastSpokenPriority < 3
+
+        if (tts?.isSpeaking == true && !isEmergencyEscalation) {
+            return false
+        }
+
+        // Richtungswechsel generisch erkennen (left vs right)
+        val isDirectionChange = (guidance.phrase.contains("left", ignoreCase = true) && lastSpokenPhrase.contains("right", ignoreCase = true)) ||
+                (guidance.phrase.contains("right", ignoreCase = true) && lastSpokenPhrase.contains("left", ignoreCase = true))
+
+        val isSameOrSimilar = isSimilarOrSame(guidance.phrase, lastSpokenPhrase)
+
+        val requiredInterval = when {
+            isEmergencyEscalation -> emergencyCooldownMs
+            isDirectionChange -> 1400L
+            isSameOrSimilar -> persistentWarningRepeatMs
+            else -> 2200L // 2.2 Sekunden Standard-Pause zwischen unterschiedlichen Kommandos (z.B. Stop -> Turn left)
+        }
+
+        if (elapsed < requiredInterval && !isEmergencyEscalation) {
+            return false
+        }
+
+        lastSpokenPhrase = guidance.phrase
+        lastSpokenTime = now
+        lastSpokenPriority = guidance.priorityLevel
+
+        tts?.speak(guidance.phrase, TextToSpeech.QUEUE_FLUSH, null, "GUIDANCE_UTTERANCE")
+        Log.d("SpeechFeedbackManager", "Spoken: ${guidance.phrase}")
+        return true
+    }
+
+    private fun isSimilarOrSame(newPhrase: String, oldPhrase: String): Boolean {
+        if (oldPhrase.isBlank()) return false
+        if (newPhrase.equals(oldPhrase, ignoreCase = true)) return true
+
+        val cleanNew = newPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
+        val cleanOld = oldPhrase.lowercase().replace(Regex("[^a-z0-9 ]"), " ")
+
+        // Gegensätzliche Richtungen dürfen NIEMALS als ähnlich gelten
+        val newHasLeft = cleanNew.contains("left")
+        val oldHasLeft = cleanOld.contains("left")
+        val newHasRight = cleanNew.contains("right")
+        val oldHasRight = cleanOld.contains("right")
+        if ((newHasLeft && oldHasRight) || (newHasRight && oldHasLeft)) {
+            return false
+        }
+
+        val wordsNew = cleanNew.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
+        val wordsOld = cleanOld.split("\\s+".toRegex()).filter { it.isNotBlank() }.toSet()
+
+        if (wordsNew.isEmpty() || wordsOld.isEmpty()) return false
+
+        val intersection = wordsNew.intersect(wordsOld).size
+        val union = wordsNew.union(wordsOld).size
+
+        return (intersection.toFloat() / union.toFloat()) >= 0.75f
+    }
+
+    fun shutdown() {
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        isInitialized = false
+    }
+
+    fun speakUrgent(text: String) {
+        if (!isInitialized) return
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "URGENT_SYSTEM_MSG")
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/MjpegStreamer.kt">
+package com.example.app_blindenstock_add_on.data.video
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
+import okhttp3.Call
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.util.concurrent.TimeUnit
+
+class MjpegStreamer(
+    private val client: OkHttpClient,
+    private val url: String,
+    private val onStatusMessage: ((String) -> Unit)? = null
+) : VideoSource {
+
+    @Volatile
+    private var activeCall: Call? = null
+
+    @Volatile
+    private var isManuallyStopped = false
+
+    private val streamClient = client.newBuilder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
+    private val decodeOptions = BitmapFactory.Options().apply {
+        inSampleSize = 2
+        inPreferredConfig = Bitmap.Config.RGB_565
+    }
+
+    override fun getFrames(): Flow<Bitmap> = flow {
+        isManuallyStopped = false
+        var retryAttempt = 0
+        var wasConnectedBefore = false
+
+        while (currentCoroutineContext().isActive && !isManuallyStopped) {
+            val request = Request.Builder()
+                .url(url)
+                .header("Cache-Control", "no-cache")
+                .header("Connection", "keep-alive")
+                .build()
+
+            val call = streamClient.newCall(request)
+            activeCall = call
+
+            try {
+                val response = call.execute()
+                if (!response.isSuccessful) {
+                    response.close()
+                    throw IllegalStateException("HTTP error code: ${response.code}")
+                }
+
+                val body = response.body ?: run {
+                    response.close()
+                    throw IllegalStateException("Empty response body")
+                }
+
+                if (retryAttempt > 0) {
+                    onStatusMessage?.invoke("Connection restored.")
+                }
+                retryAttempt = 0
+                wasConnectedBefore = true
+
+                val bufferedInput = BufferedInputStream(body.byteStream(), 65536)
+                try {
+                    while (currentCoroutineContext().isActive && !isManuallyStopped) {
+                        val frameBytes = readJpegFrame(bufferedInput) ?: break
+                        val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
+                        if (bitmap != null) {
+                            emit(bitmap)
+                        }
+                    }
+                } finally {
+                    response.close()
+                }
+            } catch (e: Exception) {
+                if (isManuallyStopped || !currentCoroutineContext().isActive) break
+
+                retryAttempt++
+                Log.w("MjpegStreamer", "Stream disconnected: ${e.message}. Reconnect attempt #$retryAttempt")
+
+                if (retryAttempt == 1 && wasConnectedBefore) {
+                    onStatusMessage?.invoke("Connection lost, reconnecting.")
+                }
+
+                // Exponential Backoff: 1s, 2s, 4s, maximal 5s Pause
+                val backoffMs = minOf(1000L * (1L shl minOf(retryAttempt - 1, 2)), 5000L)
+                delay(backoffMs)
+            } finally {
+                activeCall = null
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
+    override fun stop() {
+        isManuallyStopped = true
+        try {
+            activeCall?.cancel()
+        } catch (e: Exception) {
+            Log.w("MjpegStreamer", "Error stopping call: ${e.message}")
+        }
+        activeCall = null
+    }
+
+    private fun readJpegFrame(stream: InputStream): ByteArray? {
+        val buffer = ByteArrayOutputStream(32768)
+        var prevByte = -1
+        var inFrame = false
+
+        while (true) {
+            val currByte = stream.read()
+            if (currByte == -1) return null
+
+            if (!inFrame) {
+                if (prevByte == 0xFF && currByte == 0xD8) {
+                    inFrame = true
+                    buffer.write(prevByte)
+                    buffer.write(currByte)
+                }
+            } else {
+                buffer.write(currByte)
+                if (prevByte == 0xFF && currByte == 0xD9) {
+                    return buffer.toByteArray()
+                }
+            }
+            prevByte = currByte
+        }
+    }
+}
+</file>
+
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/data/yolov11n_gpu/YoloDetector.kt">
 package com.example.app_blindenstock_add_on.data.yolov11n_gpu
 
@@ -2626,7 +2205,7 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.util.Log
-import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.AppConfigState
 import com.example.app_blindenstock_add_on.domain.model.*
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
@@ -2749,7 +2328,7 @@ class YoloDetector(private val context: Context) {
         return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    fun detect(bitmap: Bitmap, isUserWalking: Boolean = true): FrameAnalysisResult {
+    fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult {
         val startTime = System.currentTimeMillis()
         frameSequence++
 
@@ -2773,7 +2352,7 @@ class YoloDetector(private val context: Context) {
         objectInterpreter?.let { interp ->
             inputBuffer.rewind()
             interp.run(inputBuffer, outputObjects)
-            rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH))
+            rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH, config.confThresholdObjects))
         }
 
         val rawSurfaces = if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
@@ -2786,7 +2365,7 @@ class YoloDetector(private val context: Context) {
                 } else {
                     interp.run(inputBuffer, outputSurface0)
                 }
-                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH))
+                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
             }
             cachedSurfaces = freshSurfaces
             freshSurfaces
@@ -2794,11 +2373,11 @@ class YoloDetector(private val context: Context) {
             cachedSurfaces
         }
 
-        val filteredObjects = applyNMS(rawObjects, AppConfig.NMS_IOU_THRESHOLD)
-        val filteredSurfaces = applyNMS(rawSurfaces, AppConfig.NMS_IOU_THRESHOLD)
+        val filteredObjects = applyNMS(rawObjects, config.nmsIouThreshold)
+        val filteredSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
 
         val combinedCandidates = filteredSurfaces + filteredObjects
-        val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking)
+        val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking, config)
 
         val topSurface = stabilizedDetections
             .filter { it.className in listOf("sidewalk", "path", "roadway") }
@@ -2823,10 +2402,8 @@ class YoloDetector(private val context: Context) {
         for (i in 0 until totalPixels) inputBuffer.putFloat((pixelArray[i] and 0xFF) * 0.003921569f)
     }
 
-    private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
+    private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float, confThreshold: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = AppConfig.CONF_THRESHOLD_OBJECTS
-
         for (c in 0 until 2100) {
             var maxScore = 0f
             var classId = -1
@@ -2872,10 +2449,8 @@ class YoloDetector(private val context: Context) {
         return candidates
     }
 
-    private fun processSurfaceTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
+    private fun processSurfaceTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float, confThreshold: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = AppConfig.CONF_THRESHOLD_SURFACE
-
         for (c in 0 until 2100) {
             var maxScore = 0f
             var classId = -1
@@ -2918,7 +2493,7 @@ class YoloDetector(private val context: Context) {
         return candidates
     }
 
-    private fun updateTracking(currentDetections: List<Detection>, isUserWalking: Boolean): List<Detection> {
+    private fun updateTracking(currentDetections: List<Detection>, isUserWalking: Boolean, config: AppConfigState): List<Detection> {
         val now = System.currentTimeMillis()
         val matchedCurrent = BooleanArray(currentDetections.size)
         val result = mutableListOf<Detection>()
@@ -2954,8 +2529,8 @@ class YoloDetector(private val context: Context) {
                 val dAreaPerSec = if (dt > 0) (area - tracked.prevArea) / dt else 0f
 
                 val trend = when {
-                    dAreaPerSec > AppConfig.TREND_GROWTH_PER_SEC -> "growing"
-                    dAreaPerSec < -AppConfig.TREND_GROWTH_PER_SEC -> "shrinking"
+                    dAreaPerSec > config.trendGrowthPerSec -> "growing"
+                    dAreaPerSec < -config.trendGrowthPerSec -> "shrinking"
                     else -> "constant"
                 }
 
@@ -3105,7 +2680,7 @@ class YoloDetector(private val context: Context) {
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/domain/synthesizer/guidance.kt">
 package com.example.app_blindenstock_add_on.domain.synthesizer
 
-import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.AppConfigState
 import com.example.app_blindenstock_add_on.domain.model.FrameAnalysisResult
 
 object GuidanceSynthesizer {
@@ -3119,22 +2694,27 @@ object GuidanceSynthesizer {
     private var lockedEvadeSide: String = "step left"
     private var lastEvadeLockTime: Long = 0L
     private var clearFrameCounter = 0
-    private var hazardFrameCounter = 0 // Zähler für Gefahren-Frames
+    private var hazardFrameCounter = 0
+
+    // Status für Stop-Situation
+    private var isStopActive = false
+    private var stopEvadeDirection = "Turn left"
 
     fun synthesize(
         result: FrameAnalysisResult,
         isUserWalking: Boolean,
         allowRoadwayAlerts: Boolean = false,
-        isEsp32: Boolean = false
+        isEsp32: Boolean = false,
+        config: AppConfigState
     ): GuidanceOutput {
         val now = System.currentTimeMillis()
         val detections = result.detections
         val hasStairsVisible = detections.any { it.className == "stairs" }
 
-        val stopFloorThreshold = if (isEsp32) AppConfig.STOP_FLOOR_ESP else AppConfig.STOP_FLOOR_PHONE
-        val personFloorMin = if (isEsp32) AppConfig.PERSON_FLOOR_ESP else AppConfig.PERSON_FLOOR_PHONE
-        val objectFloorMin = if (isEsp32) AppConfig.OBJECT_FLOOR_ESP else AppConfig.OBJECT_FLOOR_PHONE
-        val stairsFloorMin = if (isEsp32) AppConfig.STAIRS_FLOOR_ESP else AppConfig.STAIRS_FLOOR_PHONE
+        val stopFloorThreshold = if (isEsp32) config.stopFloorEsp else config.stopFloorPhone
+        val personFloorMin = if (isEsp32) config.personFloorEsp else config.personFloorPhone
+        val objectFloorMin = if (isEsp32) config.objectFloorEsp else config.objectFloorPhone
+        val stairsFloorMin = if (isEsp32) config.stairsFloorEsp else config.stairsFloorPhone
 
         val imminentThreat = detections.firstOrNull { det ->
             if (det.className in listOf("sidewalk", "path")) return@firstOrNull false
@@ -3145,7 +2725,7 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            val inCorridor = (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT)
+            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
 
             val isDistanceCritical = floorY > stopFloorThreshold
             val isTorsoImminent = (det.className == "person") && (area > 0.15f || det.boundingBox.width > 0.28f) && (floorY > 0.55f)
@@ -3157,23 +2737,60 @@ object GuidanceSynthesizer {
         if (imminentThreat != null) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
-                return GuidanceOutput("Stop!", isEmergency = true, priorityLevel = 3)
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
+                if (!isStopActive) {
+                    isStopActive = true
+
+                    val tLeft = imminentThreat.boundingBox.x
+                    val tRight = imminentThreat.boundingBox.x + imminentThreat.boundingBox.width
+                    val tCx = tLeft + imminentThreat.boundingBox.width / 2f
+
+                    val threatBlocksLeft = tLeft < 0.25f
+                    val threatBlocksRight = tRight > 0.75f
+
+                    val flankThreshold = 0.60f
+
+                    val hasObstacleLeft = threatBlocksLeft || detections.any {
+                        it != imminentThreat &&
+                                (allowRoadwayAlerts || it.className != "roadway") &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                    }
+                    val hasObstacleRight = threatBlocksRight || detections.any {
+                        it != imminentThreat &&
+                                (allowRoadwayAlerts || it.className != "roadway") &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                    }
+
+                    stopEvadeDirection = when {
+                        !hasObstacleLeft && !hasObstacleRight -> if (tCx >= 0.50f) "Turn left" else "Turn right"
+                        !hasObstacleLeft -> "Turn left"
+                        !hasObstacleRight -> "Turn right"
+                        else -> "Path blocked"
+                    }
+                    return GuidanceOutput("Stop!", isEmergency = true, priorityLevel = 3)
+                } else {
+                    val phrase = if (stopEvadeDirection == "Path blocked") "Path blocked." else "$stopEvadeDirection."
+                    return GuidanceOutput(phrase, isEmergency = true, priorityLevel = 3)
+                }
             }
-            return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1) // Halte still bis Bestätigung
+            return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
+        } else {
+            isStopActive = false
         }
 
         val stairsHazard = detections.firstOrNull { det ->
             val boxLeft = det.boundingBox.x
             val boxRight = det.boundingBox.x + det.boundingBox.width
             val floorY = det.boundingBox.y + det.boundingBox.height
-            det.className == "stairs" && (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT) && floorY > stairsFloorMin
+            det.className == "stairs" && (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY > stairsFloorMin
         }
 
         if (stairsHazard != null && isUserWalking) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
                 return GuidanceOutput("Caution, stairs ahead.", isEmergency = false, priorityLevel = 2)
             }
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
@@ -3194,7 +2811,7 @@ object GuidanceSynthesizer {
             if ((isRoadwayReliable || roadwayGroundCheck != null) && isUserWalking) {
                 hazardFrameCounter++
                 clearFrameCounter = 0
-                if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+                if (hazardFrameCounter >= config.hazardFramesRequired) {
                     return GuidanceOutput("Warning, roadway surface.", isEmergency = false, priorityLevel = 2)
                 }
                 return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
@@ -3207,7 +2824,7 @@ object GuidanceSynthesizer {
             val boxRight = det.boundingBox.x + det.boundingBox.width
             val floorY = det.boundingBox.y + det.boundingBox.height
 
-            val inCorridor = (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT)
+            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
             inCorridor && (floorY in personFloorMin..stopFloorThreshold)
         }
 
@@ -3215,33 +2832,40 @@ object GuidanceSynthesizer {
             hazardFrameCounter++
             clearFrameCounter = 0
 
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
-                val isLockExpired = (now - lastEvadeLockTime) > AppConfig.EVADE_LOCK_MS
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
+                val isLockExpired = (now - lastEvadeLockTime) > config.evadeLockMs
                 if (isLockExpired) {
-                    val pCx = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width / 2f
+                    val pLeft = corridorPerson.boundingBox.x
+                    val pRight = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width
+                    val pCx = pLeft + corridorPerson.boundingBox.width / 2f
+
+                    val personBlocksLeft = pLeft < 0.25f
+                    val personBlocksRight = pRight > 0.75f
                     val flankThreshold = 0.62f
 
-                    val hasObstacleLeft = detections.any {
+                    val hasObstacleLeft = personBlocksLeft || detections.any {
                         it != corridorPerson &&
                                 (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) < AppConfig.CORRIDOR_LEFT &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
                                 (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                     }
-                    val hasObstacleRight = detections.any {
+                    val hasObstacleRight = personBlocksRight || detections.any {
                         it != corridorPerson &&
                                 (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) > AppConfig.CORRIDOR_RIGHT &&
+                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
                                 (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                     }
 
                     lockedEvadeSide = when {
-                        !hasObstacleLeft && (hasObstacleRight || pCx >= 0.50f) -> "step left"
+                        !hasObstacleLeft && !hasObstacleRight -> if (pCx >= 0.50f) "step left" else "step right"
+                        !hasObstacleLeft -> "step left"
                         !hasObstacleRight -> "step right"
-                        else -> "step left"
+                        else -> "path blocked"
                     }
                     lastEvadeLockTime = now
                 }
-                return GuidanceOutput("Person ahead, $lockedEvadeSide.", isEmergency = false, priorityLevel = 2)
+                val phrase = if (lockedEvadeSide == "path blocked") "Person ahead, path blocked." else "Person ahead, $lockedEvadeSide."
+                return GuidanceOutput(phrase, isEmergency = false, priorityLevel = 2)
             }
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }
@@ -3255,7 +2879,7 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            val inCorridor = (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT)
+            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
             val inDistance = floorY in objectFloorMin..stopFloorThreshold || area > 0.10f
 
             inCorridor && inDistance
@@ -3264,7 +2888,7 @@ object GuidanceSynthesizer {
         if (vehicleHazard != null && isUserWalking) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val vehicleName = formatSpecificObjectName(vehicleHazard.className)
                 return GuidanceOutput("$vehicleName ahead.", isEmergency = false, priorityLevel = 2)
             }
@@ -3279,20 +2903,20 @@ object GuidanceSynthesizer {
 
             !isRoadwayIgnored &&
                     det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck") &&
-                    (boxLeft < AppConfig.CORRIDOR_RIGHT && boxRight > AppConfig.CORRIDOR_LEFT) && floorY in objectFloorMin..stopFloorThreshold
+                    (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY in objectFloorMin..stopFloorThreshold
         }
 
         if (staticObstacle != null && isUserWalking) {
             hazardFrameCounter++
             clearFrameCounter = 0
-            if (hazardFrameCounter >= AppConfig.HAZARD_FRAMES_REQUIRED) {
+            if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val obstacleName = formatSpecificObjectName(staticObstacle.className)
                 return GuidanceOutput("$obstacleName ahead.", isEmergency = false, priorityLevel = 2)
             }
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }
 
-        hazardFrameCounter = 0 // Zurücksetzen, wenn Frame absolut sauber ist
+        hazardFrameCounter = 0
 
         val hasCloseProximityHazard = detections.any {
             it.className !in listOf("sidewalk", "path") &&
@@ -3306,7 +2930,7 @@ object GuidanceSynthesizer {
             clearFrameCounter = 0
         }
 
-        if (clearFrameCounter >= AppConfig.CLEAR_FRAMES_REQUIRED) {
+        if (clearFrameCounter >= config.clearFramesRequired) {
             lastEvadeLockTime = 0L
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }
@@ -3450,14 +3074,515 @@ class MainActivity : ComponentActivity() {
 }
 </file>
 
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/system_services/AppForegroundService.kt">
+package com.example.app_blindenstock_add_on.framework.system_services
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.IBinder
+import android.os.PowerManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
+import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
+import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
+import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
+import com.example.app_blindenstock_add_on.data.video.VideoSource
+import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
+import com.example.app_blindenstock_add_on.domain.model.Detection
+import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+
+data class ServiceMetrics(
+    val fps: Int = 0,
+    val inferenceTime: Long = 0,
+    val isWalking: Boolean = false,
+    val detectionCount: Int = 0,
+    val isRunning: Boolean = false,
+    val currentPhrase: String = "Clear",
+    val detections: List<Detection> = emptyList(),
+    val primarySurface: String = "unknown"
+)
+
+class AppForegroundService : Service(), LifecycleOwner {
+
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+
+    private var videoSource: VideoSource? = null
+    private var detector: YoloDetector? = null
+    private var motionTracker: UserMotionTracker? = null
+    private var speechManager: SpeechFeedbackManager? = null
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private var fpsCounter = 0
+    private var fpsWindowStart = 0L
+    private var smoothedFps = 0
+
+    companion object {
+        private const val CHANNEL_ID = "AppForegroundServiceChannel"
+        private const val NOTIFICATION_ID = 1
+
+        @Volatile
+        var allowRoadwayAlerts: Boolean = false
+
+        private val _metrics = MutableStateFlow(ServiceMetrics())
+        val metrics: StateFlow<ServiceMetrics> = _metrics.asStateFlow()
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        lifecycleRegistry.currentState = Lifecycle.State.CREATED
+        createNotificationChannel()
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AppForegroundService::CpuLock")
+
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "AppForegroundService::WifiLock")
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+
+        if (wakeLock?.isHeld != true) wakeLock?.acquire(10 * 60 * 60 * 1000L)
+        if (wifiLock?.isHeld != true) wifiLock?.acquire()
+
+        val sourceType = intent?.getStringExtra("EXTRA_SOURCE_TYPE") ?: "MJPEG"
+        val url = intent?.getStringExtra("EXTRA_STREAM_URL") ?: "http://192.168.4.1/stream"
+        if (intent?.hasExtra("EXTRA_ALLOW_ROADWAY") == true) {
+            allowRoadwayAlerts = intent.getBooleanExtra("EXTRA_ALLOW_ROADWAY", false)
+        }
+
+        val isEspMode = (sourceType != "CAMERA")
+
+        try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            _metrics.value = _metrics.value.copy(isRunning = true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppForegroundService", "Start-Fehler: ${e.message}", e)
+        }
+
+        fpsCounter = 0
+        fpsWindowStart = System.currentTimeMillis()
+        smoothedFps = 0
+
+        serviceScope.launch {
+            try {
+                detector = YoloDetector(this@AppForegroundService)
+                motionTracker = UserMotionTracker(this@AppForegroundService).apply { start() }
+                speechManager = SpeechFeedbackManager(this@AppForegroundService)
+
+                videoSource = if (sourceType == "CAMERA") {
+                    LocalCameraSource(this@AppForegroundService, this@AppForegroundService)
+                } else {
+                    MjpegStreamer(OkHttpClient(), url) { message ->
+                        speechManager?.speakUrgent(message)
+                    }
+                }
+
+                videoSource?.getFrames()
+                    ?.conflate()
+                    ?.collect { bitmap ->
+                        val currentTime = System.currentTimeMillis()
+
+                        fpsCounter++
+                        val elapsed = currentTime - fpsWindowStart
+                        if (elapsed >= 1000L) {
+                            smoothedFps = ((fpsCounter * 1000L) / elapsed).toInt()
+                            fpsCounter = 0
+                            fpsWindowStart = currentTime
+                        }
+
+                        val isWalking = motionTracker?.isUserWalking ?: false
+                        val currentConfig = AppConfig.currentState.value
+
+                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
+
+                        val guidance = GuidanceSynthesizer.synthesize(
+                            result = analysisResult,
+                            isUserWalking = isWalking,
+                            allowRoadwayAlerts = allowRoadwayAlerts,
+                            isEsp32 = isEspMode,
+                            config = currentConfig
+                        )
+                        speechManager?.processGuidance(guidance)
+
+                        _metrics.value = ServiceMetrics(
+                            fps = smoothedFps,
+                            inferenceTime = detector?.lastInferenceTime ?: 0L,
+                            isWalking = isWalking,
+                            detectionCount = analysisResult.detections.size,
+                            isRunning = true,
+                            currentPhrase = guidance.phrase,
+                            detections = analysisResult.detections,
+                            primarySurface = analysisResult.primarySurface
+                        )
+                    }
+            } catch (e: Exception) {
+                android.util.Log.e("AppForegroundService", "Pipeline-Fehler: ${e.message}", e)
+            }
+        }
+
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        super.onDestroy()
+        videoSource?.stop()
+        videoSource = null
+        motionTracker?.stop()
+        motionTracker = null
+        speechManager?.shutdown()
+        speechManager = null
+        detector?.close()
+        detector = null
+
+        if (wifiLock?.isHeld == true) wifiLock?.release()
+        if (wakeLock?.isHeld == true) wakeLock?.release()
+
+        _metrics.value = ServiceMetrics(isRunning = false)
+        serviceJob.cancel()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun createNotification(): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Smart Cane Active")
+            .setContentText("Background environment tracking is running.")
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = NotificationChannel(CHANNEL_ID, "App Assistance Service", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(serviceChannel)
+        }
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/viewmodel/MainViewModel.kt">
+package com.example.app_blindenstock_add_on.framework.viewmodel
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
+import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
+import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
+import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
+import com.example.app_blindenstock_add_on.data.video.VideoSource
+import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
+import com.example.app_blindenstock_add_on.domain.model.CorridorAnalysis
+import com.example.app_blindenstock_add_on.domain.model.Detection
+import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
+import com.example.app_blindenstock_add_on.framework.system_services.AppForegroundService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+enum class AppScreen { START, CAMERA }
+enum class SourceType { MJPEG, CAMERA }
+
+data class MainUiState(
+    val currentScreen: AppScreen = AppScreen.START,
+    val currentFrame: Bitmap? = null,
+    val detections: List<Detection> = emptyList(),
+    val corridor: CorridorAnalysis = CorridorAnalysis(),
+    val primarySurface: String = "unknown",
+    val currentGuidancePhrase: String = "Clear",
+    val isRoadwayAlertsEnabled: Boolean = false,
+    val detectionLogs: List<String> = emptyList(),
+    val errorMessage: String? = null,
+    val streamUrl: String = "http://192.168.4.1/stream",
+    val sourceType: SourceType = SourceType.MJPEG,
+    val isStreaming: Boolean = false,
+    val isBackgroundRunning: Boolean = false,
+    val isUserWalking: Boolean = false,
+    val inferenceTime: Long = 0,
+    val currentFps: Int = 0
+)
+
+class MainViewModel : ViewModel() {
+
+    private val _uiState = MutableStateFlow(MainUiState())
+    val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    private var streamJob: Job? = null
+    private var videoSource: VideoSource? = null
+    private var detector: YoloDetector? = null
+    private var motionTracker: UserMotionTracker? = null
+    private var speechManager: SpeechFeedbackManager? = null
+
+    private var fpsCounter = 0
+    private var fpsWindowStart = 0L
+    private var smoothedFps = 0
+
+    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    init {
+        viewModelScope.launch {
+            AppForegroundService.metrics.collect { metrics ->
+                if (_uiState.value.isBackgroundRunning || metrics.isRunning) {
+                    _uiState.value = _uiState.value.copy(
+                        isBackgroundRunning = metrics.isRunning,
+                        currentFps = metrics.fps,
+                        inferenceTime = metrics.inferenceTime,
+                        isUserWalking = metrics.isWalking,
+                        currentGuidancePhrase = metrics.currentPhrase,
+                        detections = metrics.detections,
+                        primarySurface = metrics.primarySurface
+                    )
+                }
+            }
+        }
+    }
+
+    fun navigateTo(screen: AppScreen) { _uiState.value = _uiState.value.copy(currentScreen = screen) }
+    fun updateUrl(newUrl: String) { _uiState.value = _uiState.value.copy(streamUrl = newUrl) }
+    fun updateSourceType(type: SourceType) { _uiState.value = _uiState.value.copy(sourceType = type) }
+    fun setBackgroundRunning(running: Boolean) { _uiState.value = _uiState.value.copy(isBackgroundRunning = running) }
+
+    fun toggleRoadwayAlerts() {
+        val next = !_uiState.value.isRoadwayAlertsEnabled
+        _uiState.value = _uiState.value.copy(isRoadwayAlertsEnabled = next)
+        AppForegroundService.allowRoadwayAlerts = next
+    }
+
+    fun loadUrl(context: Context) {
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val saved = prefs.getString("stream_url", "http://192.168.4.1/stream") ?: "http://192.168.4.1/stream"
+        _uiState.value = _uiState.value.copy(streamUrl = saved)
+    }
+
+    fun saveUrl(context: Context, url: String) {
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("stream_url", url).apply()
+        _uiState.value = _uiState.value.copy(streamUrl = url)
+    }
+
+    fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
+        if (_uiState.value.isStreaming) return
+
+        val serviceIntent = Intent(context, AppForegroundService::class.java)
+        context.stopService(serviceIntent)
+        _uiState.value = _uiState.value.copy(isBackgroundRunning = false)
+
+        val type = _uiState.value.sourceType
+        val url = _uiState.value.streamUrl
+        val isEspMode = (type == SourceType.MJPEG)
+
+        fpsCounter = 0
+        fpsWindowStart = System.currentTimeMillis()
+        smoothedFps = 0
+
+        _uiState.value = _uiState.value.copy(isStreaming = true)
+
+        streamJob = viewModelScope.launch(Dispatchers.Default) {
+            detector = YoloDetector(context)
+            speechManager = SpeechFeedbackManager(context)
+            motionTracker = UserMotionTracker(context).apply { start() }
+
+            videoSource = when (type) {
+                SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url) { message ->
+                    speechManager?.speakUrgent(message)
+                }
+                SourceType.CAMERA -> {
+                    val activity = context as? androidx.activity.ComponentActivity
+                        ?: throw IllegalStateException("Context must be a ComponentActivity")
+                    LocalCameraSource(context, activity)
+                }
+            }
+
+            try {
+                videoSource?.getFrames()
+                    ?.conflate()
+                    ?.collect { bitmap ->
+                        val currentTime = System.currentTimeMillis()
+
+                        fpsCounter++
+                        val elapsed = currentTime - fpsWindowStart
+                        if (elapsed >= 1000L) {
+                            smoothedFps = ((fpsCounter * 1000L) / elapsed).toInt()
+                            fpsCounter = 0
+                            fpsWindowStart = currentTime
+                        }
+
+                        val isWalking = motionTracker?.isUserWalking ?: false
+                        val currentConfig = AppConfig.currentState.value
+
+                        val result = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
+                        val infTime = detector?.lastInferenceTime ?: 0L
+
+                        val guidance = GuidanceSynthesizer.synthesize(
+                            result = result,
+                            isUserWalking = isWalking,
+                            allowRoadwayAlerts = _uiState.value.isRoadwayAlertsEnabled,
+                            isEsp32 = isEspMode,
+                            config = currentConfig
+                        )
+                        val wasSpoken = speechManager?.processGuidance(guidance) ?: false
+
+                        val updatedLogs = if (wasSpoken) {
+                            val logEntry = "[${timeFormat.format(Date(currentTime))}] ${guidance.phrase}"
+                            (listOf(logEntry) + _uiState.value.detectionLogs).take(30)
+                        } else {
+                            _uiState.value.detectionLogs
+                        }
+
+                        _uiState.value = _uiState.value.copy(
+                            currentFrame = bitmap,
+                            detections = result.detections,
+                            primarySurface = result.primarySurface,
+                            currentGuidancePhrase = guidance.phrase,
+                            detectionLogs = updatedLogs,
+                            inferenceTime = infTime,
+                            currentFps = smoothedFps,
+                            isUserWalking = isWalking
+                        )
+                    }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Stream error: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(isStreaming = false, errorMessage = e.message)
+            }
+        }
+    }
+
+    fun stopStream() {
+        streamJob?.cancel()
+        streamJob = null
+
+        val vs = videoSource
+        val mt = motionTracker
+        val sm = speechManager
+        val det = detector
+
+        videoSource = null
+        motionTracker = null
+        speechManager = null
+        detector = null
+
+        _uiState.value = _uiState.value.copy(isStreaming = false, currentFrame = null, detections = emptyList())
+
+        // Blockierendes Zerstören der Objekte vom Main-Thread fernhalten (verhindert ANR)
+        viewModelScope.launch(Dispatchers.IO) {
+            vs?.stop()
+            mt?.stop()
+            sm?.shutdown()
+            det?.close()
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopStream()
+    }
+
+    fun saveTuningConfig(context: Context) {
+        val prefs = context.getSharedPreferences("tuning_prefs", Context.MODE_PRIVATE)
+        val s = com.example.app_blindenstock_add_on.AppConfig.currentState.value
+        prefs.edit().apply {
+            putFloat("corridorLeft", s.corridorLeft)
+            putFloat("corridorRight", s.corridorRight)
+            putFloat("stopFloorPhone", s.stopFloorPhone)
+            putFloat("personFloorPhone", s.personFloorPhone)
+            putFloat("objectFloorPhone", s.objectFloorPhone)
+            putFloat("stairsFloorPhone", s.stairsFloorPhone)
+            putFloat("stopFloorEsp", s.stopFloorEsp)
+            putFloat("personFloorEsp", s.personFloorEsp)
+            putFloat("objectFloorEsp", s.objectFloorEsp)
+            putFloat("stairsFloorEsp", s.stairsFloorEsp)
+            putFloat("confThresholdObjects", s.confThresholdObjects)
+            putFloat("confThresholdSurface", s.confThresholdSurface)
+            putFloat("nmsIouThreshold", s.nmsIouThreshold)
+            putInt("hazardFramesRequired", s.hazardFramesRequired)
+            putInt("clearFramesRequired", s.clearFramesRequired)
+        }.apply()
+    }
+
+    fun loadTuningConfig(context: Context) {
+        val prefs = context.getSharedPreferences("tuning_prefs", Context.MODE_PRIVATE)
+        // Abbruch, falls noch nie gespeichert wurde
+        if (!prefs.contains("corridorLeft")) return
+
+        val loaded = com.example.app_blindenstock_add_on.AppConfigState(
+            corridorLeft = prefs.getFloat("corridorLeft", 0.32f),
+            corridorRight = prefs.getFloat("corridorRight", 0.68f),
+            stopFloorPhone = prefs.getFloat("stopFloorPhone", 0.85f),
+            personFloorPhone = prefs.getFloat("personFloorPhone", 0.45f),
+            objectFloorPhone = prefs.getFloat("objectFloorPhone", 0.50f),
+            stairsFloorPhone = prefs.getFloat("stairsFloorPhone", 0.50f),
+            stopFloorEsp = prefs.getFloat("stopFloorEsp", 0.84f),
+            personFloorEsp = prefs.getFloat("personFloorEsp", 0.62f),
+            objectFloorEsp = prefs.getFloat("objectFloorEsp", 0.64f),
+            stairsFloorEsp = prefs.getFloat("stairsFloorEsp", 0.62f),
+            confThresholdObjects = prefs.getFloat("confThresholdObjects", 0.40f),
+            confThresholdSurface = prefs.getFloat("confThresholdSurface", 0.50f),
+            nmsIouThreshold = prefs.getFloat("nmsIouThreshold", 0.40f),
+            hazardFramesRequired = prefs.getInt("hazardFramesRequired", 3),
+            clearFramesRequired = prefs.getInt("clearFramesRequired", 6)
+        )
+        com.example.app_blindenstock_add_on.AppConfig.update(loaded)
+    }
+
+    fun resetTuningConfig() {
+        // Lädt die leere Klasse, wodurch die PC-Standardwerte wiederhergestellt werden
+        com.example.app_blindenstock_add_on.AppConfig.update(com.example.app_blindenstock_add_on.AppConfigState())
+    }
+}
+</file>
+
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/StartScreen.kt">
 package com.example.app_blindenstock_add_on.framework.ui
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -3468,7 +3593,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.app_blindenstock_add_on.AppConfig
 import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
 import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
 import com.example.app_blindenstock_add_on.framework.viewmodel.SourceType
@@ -3476,6 +3603,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StartScreen(
     viewModel: MainViewModel,
@@ -3483,11 +3611,13 @@ fun StartScreen(
     onStopBackground: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val configState by AppConfig.currentState.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
     var isSaved by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -3502,18 +3632,34 @@ fun StartScreen(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Smart Cane Assistance",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "Environment Tracking & Navigation",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Smart Cane Assistance",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Environment Tracking & Navigation",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Surface(
+                    onClick = { showSettings = true },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Text(
+                        text = "Settings",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    )
+                }
             }
 
             Card(
@@ -3594,12 +3740,7 @@ fun StartScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
-                                                Text(
-                                                    text = "✓",
-                                                    color = contentColor,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.ExtraBold
-                                                )
+                                                Text("✓", color = contentColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
                                                 Text("Saved", color = contentColor, style = MaterialTheme.typography.labelMedium)
                                             }
                                         } else {
@@ -3681,10 +3822,7 @@ fun StartScreen(
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Text(
-                        text = "Preview & Test Mode",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text("Preview & Test Mode", style = MaterialTheme.typography.titleMedium)
                 }
 
                 if (uiState.isBackgroundRunning) {
@@ -3694,10 +3832,7 @@ fun StartScreen(
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) {
-                        Text(
-                            text = "Stop Background Service",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("Stop Background Service", style = MaterialTheme.typography.titleMedium)
                     }
                 } else {
                     OutlinedButton(
@@ -3705,14 +3840,162 @@ fun StartScreen(
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                         shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text(
-                            text = "Run in Background",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("Run in Background", style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
         }
+    }
+
+    if (showSettings) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showSettings = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item { Text("Live Tuning Parameters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+
+                item {
+                    SectionHeader(
+                        title = "Corridor Boundaries",
+                        description = "Defines the active walking path. Adjusting these narrows or widens the area where hazards trigger alerts."
+                    )
+                }
+                item { SettingSlider("Corridor Left", configState.corridorLeft, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeft = it)) } }
+                item { SettingSlider("Corridor Right", configState.corridorRight, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRight = it)) } }
+
+                item {
+                    SectionHeader(
+                        title = "Smartphone Distances",
+                        description = "Safety limits for the internal camera. Lower values mean alerts trigger further away (earlier). Higher values trigger closer (later)."
+                    )
+                }
+                item { SettingSlider("Stop Floor", configState.stopFloorPhone, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorPhone = it)) } }
+                item { SettingSlider("Person Floor", configState.personFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorPhone = it)) } }
+                item { SettingSlider("Object Floor", configState.objectFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorPhone = it)) } }
+                item { SettingSlider("Stairs Floor", configState.stairsFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorPhone = it)) } }
+
+                item {
+                    SectionHeader(
+                        title = "ESP32 Distances",
+                        description = "Safety limits for the external cane camera. Lower = further away, Higher = closer."
+                    )
+                }
+                item { SettingSlider("Stop Floor", configState.stopFloorEsp, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorEsp = it)) } }
+                item { SettingSlider("Person Floor", configState.personFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorEsp = it)) } }
+                item { SettingSlider("Object Floor", configState.objectFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorEsp = it)) } }
+                item { SettingSlider("Stairs Floor", configState.stairsFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorEsp = it)) } }
+
+                item {
+                    SectionHeader(
+                        title = "AI Confidence",
+                        description = "Detection thresholds. Higher values reduce false positives but require the AI to be more certain."
+                    )
+                }
+                item { SettingSlider("Object Threshold", configState.confThresholdObjects, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdObjects = it)) } }
+                item { SettingSlider("Surface Threshold", configState.confThresholdSurface, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdSurface = it)) } }
+                item { SettingSlider("NMS Overlap (IoU)", configState.nmsIouThreshold, 0.1f..0.8f) { AppConfig.update(configState.copy(nmsIouThreshold = it)) } }
+
+                item {
+                    SectionHeader(
+                        title = "Debouncing & Filter",
+                        description = "Controls alert stability. Higher frame counts make alerts more robust but slightly delay the audio response."
+                    )
+                }
+                item { SettingSliderInt("Required Hazard Frames", configState.hazardFramesRequired, 1..10) { AppConfig.update(configState.copy(hazardFramesRequired = it)) } }
+                item { SettingSliderInt("Required Clear Frames", configState.clearFramesRequired, 1..15) { AppConfig.update(configState.copy(clearFramesRequired = it)) } }
+
+                item { Spacer(modifier = Modifier.height(24.dp)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, description: String) {
+    Column(modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) {
+        Text(text = title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Text(text = description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun SmallButton(text: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.size(32.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = text,
+                fontWeight = FontWeight.ExtraBold,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValueChange: (Float) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SmallButton("-") {
+                    val newVal = (Math.round((value - 0.01f) * 100f) / 100f).coerceIn(range)
+                    onValueChange(newVal)
+                }
+                Text(
+                    text = String.format(java.util.Locale.US, "%.2f", value),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(42.dp),
+                    textAlign = TextAlign.Center
+                )
+                SmallButton("+") {
+                    val newVal = (Math.round((value + 0.01f) * 100f) / 100f).coerceIn(range)
+                    onValueChange(newVal)
+                }
+            }
+        }
+        Slider(value = value, onValueChange = onValueChange, valueRange = range)
+    }
+}
+
+@Composable
+private fun SettingSliderInt(label: String, value: Int, range: IntRange, onValueChange: (Int) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SmallButton("-") { onValueChange((value - 1).coerceIn(range)) }
+                Text(
+                    text = "$value",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(42.dp),
+                    textAlign = TextAlign.Center
+                )
+                SmallButton("+") { onValueChange((value + 1).coerceIn(range)) }
+            }
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onValueChange(it.toInt()) },
+            valueRange = range.first.toFloat()..range.last.toFloat(),
+            steps = (range.last - range.first - 1).coerceAtLeast(0)
+        )
     }
 }
 
@@ -3727,21 +4010,14 @@ private fun SourceOption(
     val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
 
     Surface(
-        modifier = modifier.clickable { onClick() },
+        onClick = onClick,
+        modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         color = containerColor,
         tonalElevation = if (isSelected) 0.dp else 2.dp
     ) {
-        Box(
-            modifier = Modifier.padding(vertical = 14.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = contentColor
-            )
+        Box(modifier = Modifier.padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
+            Text(text = title, style = MaterialTheme.typography.labelLarge, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, color = contentColor)
         }
     }
 }
@@ -3750,35 +4026,45 @@ private fun SourceOption(
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/AppConfig.kt">
 package com.example.app_blindenstock_add_on
 
-object AppConfig {
+import kotlinx.coroutines.flow.MutableStateFlow
 
-    // Geh-Korridor einstellen
-    const val CORRIDOR_LEFT = 0.32f  // Höher = Korridor schmaler, Tiefer = breiter
-    const val CORRIDOR_RIGHT = 0.68f // Tiefer = Korridor schmaler, Höher = breiter
+data class AppConfigState(
+    // Geh-Korridor
+    val corridorLeft: Float = 0.32f,
+    val corridorRight: Float = 0.68f,
 
     // Warnabstände für interne Smartphone-Kamera
-    const val STOP_FLOOR_PHONE = 0.85f   // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
-    const val PERSON_FLOOR_PHONE = 0.45f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val OBJECT_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val STAIRS_FLOOR_PHONE = 0.50f // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    val stopFloorPhone: Float = 0.85f,
+    val personFloorPhone: Float = 0.45f,
+    val objectFloorPhone: Float = 0.50f,
+    val stairsFloorPhone: Float = 0.50f,
 
     // Warnabstände für ESP32-Kamera
-    const val STOP_FLOOR_ESP = 0.84f     // Tiefer = Stoppt früher (weiter weg), Höher = später (näher dran)
-    const val PERSON_FLOOR_ESP = 0.62f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val OBJECT_FLOOR_ESP = 0.64f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
-    const val STAIRS_FLOOR_ESP = 0.62f   // Tiefer = Warnt früher (weiter weg), Höher = später (näher dran)
+    val stopFloorEsp: Float = 0.84f,
+    val personFloorEsp: Float = 0.62f,
+    val objectFloorEsp: Float = 0.64f,
+    val stairsFloorEsp: Float = 0.62f,
 
     // KI-Erkennungs-Schwellenwerte
-    const val CONF_THRESHOLD_OBJECTS = 0.40f // Höher = Weniger falsche Objekte, übersieht aber evtl. echte
-    const val CONF_THRESHOLD_SURFACE = 0.50f // Höher = Strengere Bodenerkennung, weniger Fehler
-    const val NMS_IOU_THRESHOLD = 0.40f      // Tiefer = Löscht überlappende Boxen aggressiver, Höher = erlaubt mehr Boxen übereinander
+    val confThresholdObjects: Float = 0.40f,
+    val confThresholdSurface: Float = 0.50f,
+    val nmsIouThreshold: Float = 0.40f,
 
     // Frame-Filter (Entprellung)
-    const val HAZARD_FRAMES_REQUIRED = 3      // Höher = Robuster gegen falsche Warnungen, Tiefer = Löst schneller aus
-    const val CLEAR_FRAMES_REQUIRED = 6       // Tiefer = Gibt schneller Entwarnung, Höher = robuster gegen falsche Entwarnungen
+    val hazardFramesRequired: Int = 3,
+    val clearFramesRequired: Int = 6,
 
-    const val EVADE_LOCK_MS = 3500L           // Tiefer = Wechselt Ausweichrichtung schneller, Höher = Richtung bleibt länger stabil
-    const val TREND_GROWTH_PER_SEC = 0.15f    // Tiefer = Löst bei langsamer Annäherung aus, Höher = Löst nur bei schneller Annäherung aus
+    // Dynamik & Logik
+    val evadeLockMs: Long = 3500L,
+    val trendGrowthPerSec: Float = 0.15f
+)
+
+object AppConfig {
+    val currentState = MutableStateFlow(AppConfigState())
+
+    fun update(newState: AppConfigState) {
+        currentState.value = newState
+    }
 }
 </file>
 

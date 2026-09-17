@@ -16,6 +16,7 @@ import androidx.core.app.ServiceCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import com.example.app_blindenstock_add_on.AppConfig
 import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
 import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
 import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
@@ -116,7 +117,6 @@ class AppForegroundService : Service(), LifecycleOwner {
 
         serviceScope.launch {
             try {
-                // ANR-Schutz: Vollständige Instanziierung im Background Thread
                 detector = YoloDetector(this@AppForegroundService)
                 motionTracker = UserMotionTracker(this@AppForegroundService).apply { start() }
                 speechManager = SpeechFeedbackManager(this@AppForegroundService)
@@ -143,13 +143,16 @@ class AppForegroundService : Service(), LifecycleOwner {
                         }
 
                         val isWalking = motionTracker?.isUserWalking ?: false
-                        val analysisResult = detector?.detect(bitmap, isWalking) ?: return@collect
+                        val currentConfig = AppConfig.currentState.value
+
+                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = analysisResult,
                             isUserWalking = isWalking,
                             allowRoadwayAlerts = allowRoadwayAlerts,
-                            isEsp32 = isEspMode
+                            isEsp32 = isEspMode,
+                            config = currentConfig
                         )
                         speechManager?.processGuidance(guidance)
 

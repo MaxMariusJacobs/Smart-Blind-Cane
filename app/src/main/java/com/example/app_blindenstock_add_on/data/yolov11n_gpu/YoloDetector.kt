@@ -6,7 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.util.Log
-import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.AppConfigState
 import com.example.app_blindenstock_add_on.domain.model.*
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
@@ -129,7 +129,7 @@ class YoloDetector(private val context: Context) {
         return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    fun detect(bitmap: Bitmap, isUserWalking: Boolean = true): FrameAnalysisResult {
+    fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult {
         val startTime = System.currentTimeMillis()
         frameSequence++
 
@@ -153,7 +153,7 @@ class YoloDetector(private val context: Context) {
         objectInterpreter?.let { interp ->
             inputBuffer.rewind()
             interp.run(inputBuffer, outputObjects)
-            rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH))
+            rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH, config.confThresholdObjects))
         }
 
         val rawSurfaces = if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
@@ -166,7 +166,7 @@ class YoloDetector(private val context: Context) {
                 } else {
                     interp.run(inputBuffer, outputSurface0)
                 }
-                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH))
+                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
             }
             cachedSurfaces = freshSurfaces
             freshSurfaces
@@ -174,11 +174,11 @@ class YoloDetector(private val context: Context) {
             cachedSurfaces
         }
 
-        val filteredObjects = applyNMS(rawObjects, AppConfig.NMS_IOU_THRESHOLD)
-        val filteredSurfaces = applyNMS(rawSurfaces, AppConfig.NMS_IOU_THRESHOLD)
+        val filteredObjects = applyNMS(rawObjects, config.nmsIouThreshold)
+        val filteredSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
 
         val combinedCandidates = filteredSurfaces + filteredObjects
-        val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking)
+        val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking, config)
 
         val topSurface = stabilizedDetections
             .filter { it.className in listOf("sidewalk", "path", "roadway") }
@@ -203,10 +203,8 @@ class YoloDetector(private val context: Context) {
         for (i in 0 until totalPixels) inputBuffer.putFloat((pixelArray[i] and 0xFF) * 0.003921569f)
     }
 
-    private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
+    private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float, confThreshold: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = AppConfig.CONF_THRESHOLD_OBJECTS
-
         for (c in 0 until 2100) {
             var maxScore = 0f
             var classId = -1
@@ -252,10 +250,8 @@ class YoloDetector(private val context: Context) {
         return candidates
     }
 
-    private fun processSurfaceTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float): List<Detection> {
+    private fun processSurfaceTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float, confThreshold: Float): List<Detection> {
         val candidates = mutableListOf<Detection>()
-        val confThreshold = AppConfig.CONF_THRESHOLD_SURFACE
-
         for (c in 0 until 2100) {
             var maxScore = 0f
             var classId = -1
@@ -298,7 +294,7 @@ class YoloDetector(private val context: Context) {
         return candidates
     }
 
-    private fun updateTracking(currentDetections: List<Detection>, isUserWalking: Boolean): List<Detection> {
+    private fun updateTracking(currentDetections: List<Detection>, isUserWalking: Boolean, config: AppConfigState): List<Detection> {
         val now = System.currentTimeMillis()
         val matchedCurrent = BooleanArray(currentDetections.size)
         val result = mutableListOf<Detection>()
@@ -334,8 +330,8 @@ class YoloDetector(private val context: Context) {
                 val dAreaPerSec = if (dt > 0) (area - tracked.prevArea) / dt else 0f
 
                 val trend = when {
-                    dAreaPerSec > AppConfig.TREND_GROWTH_PER_SEC -> "growing"
-                    dAreaPerSec < -AppConfig.TREND_GROWTH_PER_SEC -> "shrinking"
+                    dAreaPerSec > config.trendGrowthPerSec -> "growing"
+                    dAreaPerSec < -config.trendGrowthPerSec -> "shrinking"
                     else -> "constant"
                 }
 
