@@ -2,7 +2,9 @@ package com.example.app_blindenstock_add_on.framework.ui
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -91,7 +93,7 @@ fun StartScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .animateContentSize(),
+                    .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(20.dp)
             ) {
@@ -122,104 +124,125 @@ fun StartScreen(
                         ) { viewModel.updateSourceType(SourceType.CAMERA) }
                     }
 
-                    if (uiState.sourceType == SourceType.MJPEG) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedTextField(
-                                value = uiState.streamUrl,
-                                onValueChange = {
-                                    viewModel.updateUrl(it)
-                                    isSaved = false
-                                },
-                                label = { Text("Network Address") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                trailingIcon = {
-                                    val buttonColor = if (isSaved) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary
-                                    val contentColor = if (isSaved) Color.White else MaterialTheme.colorScheme.onPrimary
+                    // NEU: Flüssige AnimatedContent Slide- & Fade-Transition
+                    AnimatedContent(
+                        targetState = uiState.sourceType,
+                        transitionSpec = {
+                            (fadeIn(animationSpec = tween(200)) + slideInVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { it / 6 }) togetherWith
+                                    (fadeOut(animationSpec = tween(200)) + slideOutVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { -it / 6 })
+                        },
+                        label = "sourceTypeTransition"
+                    ) { type ->
+                        if (type == SourceType.MJPEG) {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                OutlinedTextField(
+                                    value = uiState.streamUrl,
+                                    onValueChange = {
+                                        viewModel.updateUrl(it)
+                                        isSaved = false
+                                    },
+                                    label = { Text("Network Address") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    trailingIcon = {
+                                        val buttonColor by animateColorAsState(
+                                            targetValue = if (isSaved) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary,
+                                            animationSpec = tween(300), label = "saveBtnColor"
+                                        )
+                                        val contentColor by animateColorAsState(
+                                            targetValue = if (isSaved) Color.White else MaterialTheme.colorScheme.onPrimary,
+                                            animationSpec = tween(300), label = "saveContentColor"
+                                        )
 
-                                    Surface(
+                                        Surface(
+                                            modifier = Modifier
+                                                .padding(end = 6.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    if (!isSaved) {
+                                                        viewModel.saveUrl(context, uiState.streamUrl)
+                                                        isSaved = true
+                                                        scope.launch {
+                                                            delay(2.seconds)
+                                                            isSaved = false
+                                                        }
+                                                    }
+                                                },
+                                            color = buttonColor
+                                        ) {
+                                            Box(
+                                                modifier = Modifier.animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                AnimatedContent(
+                                                    targetState = isSaved,
+                                                    transitionSpec = {
+                                                        (fadeIn() + scaleIn()) togetherWith (fadeOut() + scaleOut()) using SizeTransform(clip = false)
+                                                    },
+                                                    label = "save_button_animation"
+                                                ) { savedState ->
+                                                    if (savedState) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                        ) {
+                                                            Text("✓", color = contentColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
+                                                            Text("Saved", color = contentColor, style = MaterialTheme.typography.labelMedium)
+                                                        }
+                                                    } else {
+                                                        Text(
+                                                            text = "Save",
+                                                            color = contentColor,
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+
+                                if (uiState.savedUrls.isNotEmpty()) {
+                                    Row(
                                         modifier = Modifier
-                                            .padding(end = 6.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable {
-                                                if (!isSaved) {
-                                                    viewModel.saveUrl(context, uiState.streamUrl)
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        uiState.savedUrls.forEach { url ->
+                                            Surface(
+                                                onClick = {
+                                                    viewModel.updateUrl(url)
                                                     isSaved = true
                                                     scope.launch {
                                                         delay(2.seconds)
                                                         isSaved = false
                                                     }
-                                                }
-                                            },
-                                        color = buttonColor
-                                    ) {
-                                        AnimatedContent(
-                                            targetState = isSaved,
-                                            transitionSpec = {
-                                                (fadeIn() + scaleIn()) togetherWith (fadeOut() + scaleOut()) using SizeTransform(clip = false)
-                                            },
-                                            label = "save_button_animation"
-                                        ) { savedState ->
-                                            if (savedState) {
-                                                Row(
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                                ) {
-                                                    Text("✓", color = contentColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
-                                                    Text("Saved", color = contentColor, style = MaterialTheme.typography.labelMedium)
-                                                }
-                                            } else {
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = MaterialTheme.colorScheme.secondaryContainer
+                                            ) {
                                                 Text(
-                                                    text = "Save",
-                                                    color = contentColor,
+                                                    text = url.removePrefix("http://").removeSuffix("/stream"),
                                                     style = MaterialTheme.typography.labelMedium,
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
                                                 )
                                             }
                                         }
                                     }
                                 }
-                            )
-
-                            if (uiState.savedUrls.isNotEmpty()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    uiState.savedUrls.forEach { url ->
-                                        Surface(
-                                            onClick = {
-                                                viewModel.updateUrl(url)
-                                                isSaved = true
-                                                scope.launch {
-                                                    delay(2.seconds)
-                                                    isSaved = false
-                                                }
-                                            },
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = MaterialTheme.colorScheme.secondaryContainer
-                                        ) {
-                                            Text(
-                                                text = url.removePrefix("http://").removeSuffix("/stream"),
-                                                style = MaterialTheme.typography.labelMedium,
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                                            )
-                                        }
-                                    }
-                                }
                             }
+                        } else {
+                            Text(
+                                text = "Uses the internal smartphone camera for environment tracking.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    } else {
-                        Text(
-                            text = "Uses the internal smartphone camera for environment tracking.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }
@@ -518,8 +541,16 @@ private fun SourceOption(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
-    val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val containerColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(durationMillis = 300),
+        label = "sourceOptionContainer"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(durationMillis = 300),
+        label = "sourceOptionContent"
+    )
 
     Surface(
         onClick = onClick,
