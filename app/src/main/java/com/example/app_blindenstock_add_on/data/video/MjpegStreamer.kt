@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -14,20 +15,23 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
-import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 class MjpegStreamer(
     private val client: OkHttpClient,
-    private val url: String
+    private val url: String,
+    private val onStatusMessage: ((String) -> Unit)? = null
 ) : VideoSource {
 
     @Volatile
     private var activeCall: Call? = null
 
+    @Volatile
+    private var isManuallyStopped = false
+
     private val streamClient = client.newBuilder()
-        .connectTimeout(4, TimeUnit.SECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .retryOnConnectionFailure(true)
         .build()
@@ -38,60 +42,75 @@ class MjpegStreamer(
     }
 
     override fun getFrames(): Flow<Bitmap> = flow {
-        val request = Request.Builder()
-            .url(url)
-            .header("Cache-Control", "no-cache")
-            .header("Connection", "keep-alive")
-            .build()
+        isManuallyStopped = false
+        var retryAttempt = 0
+        var wasConnectedBefore = false
 
-        val call = streamClient.newCall(request)
-        activeCall = call
+        while (currentCoroutineContext().isActive && !isManuallyStopped) {
+            val request = Request.Builder()
+                .url(url)
+                .header("Cache-Control", "no-cache")
+                .header("Connection", "keep-alive")
+                .build()
 
-        val response = try {
-            call.execute()
-        } catch (e: Exception) {
-            Log.e("MjpegStreamer", "Verbindung zu $url fehlgeschlagen: ${e.message}")
-            return@flow
-        }
+            val call = streamClient.newCall(request)
+            activeCall = call
 
-        if (!response.isSuccessful) {
-            Log.e("MjpegStreamer", "HTTP-Fehler: ${response.code}")
-            response.close()
-            return@flow
-        }
-
-        val body = response.body
-        if (body == null) {
-            response.close()
-            return@flow
-        }
-
-        val bufferedInput = BufferedInputStream(body.byteStream(), 65536)
-
-        try {
-            while (true) {
-                // Deadlock-Schutz: Bricht sofort ab, wenn UI den Job stoppt
-                if (!currentCoroutineContext().isActive) break
-
-                val frameBytes = readJpegFrame(bufferedInput) ?: break
-                val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
-                if (bitmap != null) {
-                    emit(bitmap)
+            try {
+                val response = call.execute()
+                if (!response.isSuccessful) {
+                    response.close()
+                    throw IllegalStateException("HTTP error code: ${response.code}")
                 }
+
+                val body = response.body ?: run {
+                    response.close()
+                    throw IllegalStateException("Empty response body")
+                }
+
+                if (retryAttempt > 0) {
+                    onStatusMessage?.invoke("Connection restored.")
+                }
+                retryAttempt = 0
+                wasConnectedBefore = true
+
+                val bufferedInput = BufferedInputStream(body.byteStream(), 65536)
+                try {
+                    while (currentCoroutineContext().isActive && !isManuallyStopped) {
+                        val frameBytes = readJpegFrame(bufferedInput) ?: break
+                        val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
+                        if (bitmap != null) {
+                            emit(bitmap)
+                        }
+                    }
+                } finally {
+                    response.close()
+                }
+            } catch (e: Exception) {
+                if (isManuallyStopped || !currentCoroutineContext().isActive) break
+
+                retryAttempt++
+                Log.w("MjpegStreamer", "Stream disconnected: ${e.message}. Reconnect attempt #$retryAttempt")
+
+                if (retryAttempt == 1 && wasConnectedBefore) {
+                    onStatusMessage?.invoke("Connection lost, reconnecting.")
+                }
+
+                // Exponential Backoff: 1s, 2s, 4s, maximal 5s Pause
+                val backoffMs = minOf(1000L * (1L shl minOf(retryAttempt - 1, 2)), 5000L)
+                delay(backoffMs)
+            } finally {
+                activeCall = null
             }
-        } catch (e: Exception) {
-            Log.w("MjpegStreamer", "Stream getrennt: ${e.message}")
-        } finally {
-            response.close()
-            activeCall = null
         }
     }.flowOn(Dispatchers.IO)
 
     override fun stop() {
+        isManuallyStopped = true
         try {
             activeCall?.cancel()
         } catch (e: Exception) {
-            Log.w("MjpegStreamer", "Fehler beim Stoppen: ${e.message}")
+            Log.w("MjpegStreamer", "Error stopping call: ${e.message}")
         }
         activeCall = null
     }

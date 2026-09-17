@@ -915,6 +915,7 @@ kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "ko
 .externalNativeBuild
 .cxx
 local.properties
+repomix-output.*
 </file>
 
 <file path="build.gradle.kts">

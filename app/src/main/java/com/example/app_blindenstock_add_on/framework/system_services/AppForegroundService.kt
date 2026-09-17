@@ -124,7 +124,9 @@ class AppForegroundService : Service(), LifecycleOwner {
                 videoSource = if (sourceType == "CAMERA") {
                     LocalCameraSource(this@AppForegroundService, this@AppForegroundService)
                 } else {
-                    MjpegStreamer(OkHttpClient(), url)
+                    MjpegStreamer(OkHttpClient(), url) { message ->
+                        speechManager?.speakUrgent(message)
+                    }
                 }
 
                 videoSource?.getFrames()

@@ -274,7 +274,8 @@ private fun SourceOption(
     val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
 
     Surface(
-        modifier = modifier.clickable { onClick() },
+        onClick = onClick, // Natives onClick von Surface nutzen
+        modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         color = containerColor,
         tonalElevation = if (isSelected) 0.dp else 2.dp

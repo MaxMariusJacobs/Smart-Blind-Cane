@@ -129,7 +129,9 @@ class MainViewModel : ViewModel() {
             motionTracker = UserMotionTracker(context).apply { start() }
 
             videoSource = when (type) {
-                SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url)
+                SourceType.MJPEG -> MjpegStreamer(okhttp3.OkHttpClient(), url) { message ->
+                    speechManager?.speakUrgent(message)
+                }
                 SourceType.CAMERA -> {
                     val activity = context as? androidx.activity.ComponentActivity
                         ?: throw IllegalStateException("Context must be a ComponentActivity")

@@ -154,4 +154,9 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
         tts = null
         isInitialized = false
     }
+
+    fun speakUrgent(text: String) {
+        if (!isInitialized) return
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "URGENT_SYSTEM_MSG")
+    }
 }
