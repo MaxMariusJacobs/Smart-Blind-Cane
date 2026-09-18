@@ -257,12 +257,13 @@ class LocalCameraSource(
     }
 
     override fun stop() {
-        cameraExecutor.shutdown()
         ContextCompat.getMainExecutor(context).execute {
             try {
                 cameraProvider?.unbindAll()
             } catch (e: Exception) {
                 Log.e("LocalCameraSource", "Unbind failed", e)
+            } finally {
+                cameraExecutor.shutdown()
             }
         }
     }
@@ -792,6 +793,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
@@ -852,7 +854,7 @@ toolchainVersion=21
 
 <file path="gradle/libs.versions.toml">
 [versions]
-agp = "9.4.0"
+agp = "9.4.1"
 coreKtx = "1.12.0"
 junit = "4.13.2"
 junitVersion = "1.1.5"
@@ -869,6 +871,7 @@ graphicsPath = "1.1.0"
 camerax = "1.3.4"
 
 [libraries]
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
 androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
 androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
@@ -1766,11 +1769,22 @@ fun CameraScreen(viewModel: MainViewModel) {
                     }
 
                 } else {
-                    Text(
-                        text = "Connecting camera...",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color.White.copy(alpha = 0.7f)
-                    )
+                    // Animierte Ladeanzeige während des Kameraverbindungsaufbaus
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
+                        )
+                        Text(
+                            text = "Connecting camera...",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
                 }
             }
 
@@ -1831,7 +1845,7 @@ fun CameraScreen(viewModel: MainViewModel) {
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {
                 Text(
-                    text = "Stop Pipeline",
+                    text = "Stop",
                     style = MaterialTheme.typography.titleMedium
                 )
             }
@@ -2323,6 +2337,11 @@ import android.graphics.Paint
 import android.util.Log
 import com.example.app_blindenstock_add_on.AppConfigState
 import com.example.app_blindenstock_add_on.domain.model.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
@@ -2339,15 +2358,25 @@ class YoloDetector(private val context: Context) {
     private var objectGpuDelegate: GpuDelegate? = null
     private var surfaceGpuDelegate: GpuDelegate? = null
 
+    // Coroutine Mutex ersetzt @Synchronized
+    private val mutex = Mutex()
+
     private val scaledBitmap = Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888)
     private val scaleCanvas = Canvas(scaledBitmap)
     private val scaleMatrix = Matrix()
     private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    private val inputBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
+    // Zwei separate Input-Buffer für die parallele Ausführung
+    private val inputBufferObjects: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
         order(ByteOrder.nativeOrder())
     }
+    private val inputBufferSurface: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
+        order(ByteOrder.nativeOrder())
+    }
+
     private val pixelArray = IntArray(320 * 320)
+    // Schnelles JVM-Array für das Preprocessing (Bulk-Transfer)
+    private val floatArray = FloatArray(3 * 320 * 320)
 
     private val outputObjects = Array(1) { Array(84) { FloatArray(2100) } }
     private val outputSurface0 = Array(1) { Array(40) { FloatArray(2100) } }
@@ -2444,78 +2473,102 @@ class YoloDetector(private val context: Context) {
         return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult {
-        val startTime = System.currentTimeMillis()
-        frameSequence++
-
-        val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
-        val dx = (320f - bitmap.width * scale) / 2f
-        val dy = (320f - bitmap.height * scale) / 2f
-
-        scaleMatrix.reset()
-        scaleMatrix.postScale(scale, scale)
-        scaleMatrix.postTranslate(dx, dy)
-        scaleCanvas.drawColor(android.graphics.Color.BLACK)
-        scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
-        preprocessNCHW(scaledBitmap)
-
-        val padX = dx / 320f
-        val padY = dy / 320f
-        val activeW = (bitmap.width * scale) / 320f
-        val activeH = (bitmap.height * scale) / 320f
-
-        val rawObjects = mutableListOf<Detection>()
-        objectInterpreter?.let { interp ->
-            inputBuffer.rewind()
-            interp.run(inputBuffer, outputObjects)
-            rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH, config.confThresholdObjects))
-        }
-
-        val rawSurfaces = if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
-            val freshSurfaces = mutableListOf<Detection>()
-            surfaceInterpreter?.let { interp ->
-                inputBuffer.rewind()
-                if (surfaceHasDualOutputs) {
-                    val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
-                    interp.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
-                } else {
-                    interp.run(inputBuffer, outputSurface0)
-                }
-                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
+    suspend fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult = mutex.withLock {
+        coroutineScope {
+            if (objectInterpreter == null && surfaceInterpreter == null) {
+                return@coroutineScope FrameAnalysisResult(emptyList(), CorridorAnalysis(), "unknown", 0f)
             }
-            cachedSurfaces = freshSurfaces
-            freshSurfaces
-        } else {
-            cachedSurfaces
+
+            val startTime = System.currentTimeMillis()
+            frameSequence++
+
+            val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
+            val dx = (320f - bitmap.width * scale) / 2f
+            val dy = (320f - bitmap.height * scale) / 2f
+
+            scaleMatrix.reset()
+            scaleMatrix.postScale(scale, scale)
+            scaleMatrix.postTranslate(dx, dy)
+            scaleCanvas.drawColor(android.graphics.Color.BLACK)
+            scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
+
+            // Beide Buffer mit dem optimierten Array füllen
+            preprocessNCHW(scaledBitmap, inputBufferObjects)
+            inputBufferSurface.rewind()
+            inputBufferSurface.asFloatBuffer().put(floatArray)
+
+            val padX = dx / 320f
+            val padY = dy / 320f
+            val activeW = (bitmap.width * scale) / 320f
+            val activeH = (bitmap.height * scale) / 320f
+
+            // Asynchroner Task 1: Objekterkennung
+            val deferredObjects = async(Dispatchers.Default) {
+                val rawObjects = mutableListOf<Detection>()
+                objectInterpreter?.let { interp ->
+                    inputBufferObjects.rewind()
+                    interp.run(inputBufferObjects, outputObjects)
+                    rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH, config.confThresholdObjects))
+                }
+                applyNMS(rawObjects, config.nmsIouThreshold)
+            }
+
+            // Asynchroner Task 2: Oberflächenerkennung (läuft nur jeden 2. Frame)
+            val deferredSurfaces = async(Dispatchers.Default) {
+                if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
+                    val rawSurfaces = mutableListOf<Detection>()
+                    surfaceInterpreter?.let { interp ->
+                        inputBufferSurface.rewind()
+                        if (surfaceHasDualOutputs) {
+                            val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
+                            interp.runForMultipleInputsOutputs(arrayOf(inputBufferSurface), outputs)
+                        } else {
+                            interp.run(inputBufferSurface, outputSurface0)
+                        }
+                        rawSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
+                    }
+                    cachedSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
+                }
+                cachedSurfaces
+            }
+
+            // Auf beide parallele Tasks warten
+            val filteredObjects = deferredObjects.await()
+            val filteredSurfaces = deferredSurfaces.await()
+
+            val combinedCandidates = filteredSurfaces + filteredObjects
+            val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking, config)
+
+            val topSurface = stabilizedDetections
+                .filter { it.className in listOf("sidewalk", "path", "roadway") }
+                .maxByOrNull { it.score }
+
+            lastInferenceTime = System.currentTimeMillis() - startTime
+
+            FrameAnalysisResult(
+                detections = stabilizedDetections,
+                corridor = CorridorAnalysis(),
+                primarySurface = topSurface?.className ?: "unknown",
+                surfaceConfidence = topSurface?.score ?: 0f
+            )
         }
-
-        val filteredObjects = applyNMS(rawObjects, config.nmsIouThreshold)
-        val filteredSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
-
-        val combinedCandidates = filteredSurfaces + filteredObjects
-        val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking, config)
-
-        val topSurface = stabilizedDetections
-            .filter { it.className in listOf("sidewalk", "path", "roadway") }
-            .maxByOrNull { it.score }
-
-        lastInferenceTime = System.currentTimeMillis() - startTime
-
-        return FrameAnalysisResult(
-            detections = stabilizedDetections,
-            corridor = CorridorAnalysis(),
-            primarySurface = topSurface?.className ?: "unknown",
-            surfaceConfidence = topSurface?.score ?: 0f
-        )
     }
 
-    private fun preprocessNCHW(bitmap: Bitmap) {
-        inputBuffer.rewind()
+    private fun preprocessNCHW(bitmap: Bitmap, targetBuffer: ByteBuffer) {
         bitmap.getPixels(pixelArray, 0, 320, 0, 0, 320, 320)
         val totalPixels = 320 * 320
-        for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 16) and 0xFF) * 0.003921569f)
-        for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 8) and 0xFF) * 0.003921569f)
-        for (i in 0 until totalPixels) inputBuffer.putFloat((pixelArray[i] and 0xFF) * 0.003921569f)
+
+        // JVM-internes Array befüllen (keine extrem langsamen JNI-Calls pro Pixel mehr)
+        for (i in 0 until totalPixels) {
+            val pixel = pixelArray[i]
+            floatArray[i] = ((pixel shr 16) and 0xFF) * 0.003921569f
+            floatArray[totalPixels + i] = ((pixel shr 8) and 0xFF) * 0.003921569f
+            floatArray[2 * totalPixels + i] = (pixel and 0xFF) * 0.003921569f
+        }
+
+        // Ein einziger Bulk-Transfer in den nativen C++ Speicher
+        targetBuffer.rewind()
+        targetBuffer.asFloatBuffer().put(floatArray)
     }
 
     private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float, confThreshold: Float): List<Detection> {
@@ -2783,12 +2836,20 @@ class YoloDetector(private val context: Context) {
         return if (union > 0f) intersection / union else 0f
     }
 
-    fun close() {
-        objectInterpreter?.close()
-        surfaceInterpreter?.close()
-        objectGpuDelegate?.close()
-        surfaceGpuDelegate?.close()
-        scaledBitmap.recycle()
+    suspend fun close() = mutex.withLock {
+        try {
+            objectInterpreter?.close()
+            surfaceInterpreter?.close()
+            objectGpuDelegate?.close()
+            surfaceGpuDelegate?.close()
+        } catch (e: Exception) {
+            Log.w("YoloDetector", "Error closing interpreters: ${e.message}")
+        } finally {
+            objectInterpreter = null
+            surfaceInterpreter = null
+            objectGpuDelegate = null
+            surfaceGpuDelegate = null
+        }
     }
 }
 </file>
@@ -3255,14 +3316,21 @@ class AppForegroundService : Service(), LifecycleOwner {
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
+
         videoSource?.stop()
         videoSource = null
         motionTracker?.stop()
         motionTracker = null
         speechManager?.shutdown()
         speechManager = null
-        detector?.close()
+
+        // Den Detector in einer lokalen Variable zwischenspeichern und den
+        // suspend-Aufruf in einem separaten Thread feuern
+        val det = detector
         detector = null
+        CoroutineScope(Dispatchers.IO).launch {
+            det?.close()
+        }
 
         if (wifiLock?.isHeld == true) wifiLock?.release()
         if (wakeLock?.isHeld == true) wakeLock?.release()
@@ -3335,10 +3403,11 @@ data class MainUiState(
     val isRoadwayAlertsEnabled: Boolean = false,
     val detectionLogs: List<String> = emptyList(),
     val errorMessage: String? = null,
-    val streamUrl: String = "", // <--- Startet jetzt immer leer
-    val savedUrls: List<String> = emptyList(), // <--- NEU: Speichert bis zu 3 Adressen
+    val streamUrl: String = "",
+    val savedUrls: List<String> = emptyList(),
     val sourceType: SourceType = SourceType.MJPEG,
     val isStreaming: Boolean = false,
+    val isLoading: Boolean = false,
     val isBackgroundRunning: Boolean = false,
     val isUserWalking: Boolean = false,
     val inferenceTime: Long = 0,
@@ -3351,6 +3420,8 @@ class MainViewModel : ViewModel() {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var streamJob: Job? = null
+    private var cleanupJob: Job? = null // Synchronisiert den Abbau der Ressourcen
+
     private var videoSource: VideoSource? = null
     private var detector: YoloDetector? = null
     private var motionTracker: UserMotionTracker? = null
@@ -3397,7 +3468,7 @@ class MainViewModel : ViewModel() {
         val urls = savedString.split(",").filter { it.isNotBlank() }
 
         _uiState.value = _uiState.value.copy(
-            streamUrl = "", // Bewusst leer lassen beim Start
+            streamUrl = "",
             savedUrls = urls
         )
     }
@@ -3407,9 +3478,9 @@ class MainViewModel : ViewModel() {
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
 
         val currentUrls = _uiState.value.savedUrls.toMutableList()
-        currentUrls.remove(url) // Duplikat entfernen, falls schon vorhanden
-        currentUrls.add(0, url) // Als neueste an Position 1 setzen
-        val trimmedUrls = currentUrls.take(3) // Nur die letzten 3 behalten
+        currentUrls.remove(url)
+        currentUrls.add(0, url)
+        val trimmedUrls = currentUrls.take(3)
 
         prefs.edit().putString("saved_urls", trimmedUrls.joinToString(",")).apply()
 
@@ -3420,7 +3491,8 @@ class MainViewModel : ViewModel() {
     }
 
     fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        if (_uiState.value.isStreaming) return
+        // Verhindert doppelte Starts während das Modell noch lädt
+        if (_uiState.value.isStreaming || _uiState.value.isLoading) return
 
         val urlToUse = _uiState.value.streamUrl
         if (_uiState.value.sourceType == SourceType.MJPEG && urlToUse.isBlank()) {
@@ -3439,9 +3511,12 @@ class MainViewModel : ViewModel() {
         fpsWindowStart = System.currentTimeMillis()
         smoothedFps = 0
 
-        _uiState.value = _uiState.value.copy(isStreaming = true)
+        _uiState.value = _uiState.value.copy(isStreaming = true, isLoading = true)
 
         streamJob = viewModelScope.launch(Dispatchers.Default) {
+            // WICHTIG: Warte bis alte Streams/Modelle restlos aus dem RAM gelöscht sind
+            cleanupJob?.join()
+
             detector = YoloDetector(context)
             speechManager = SpeechFeedbackManager(context)
             motionTracker = UserMotionTracker(context).apply { start() }
@@ -3501,18 +3576,19 @@ class MainViewModel : ViewModel() {
                             detectionLogs = updatedLogs,
                             inferenceTime = infTime,
                             currentFps = smoothedFps,
-                            isUserWalking = isWalking
+                            isUserWalking = isWalking,
+                            isLoading = false // Erstes Bild erfolgreich empfangen
                         )
                     }
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Stream error: ${e.message}", e)
-                _uiState.value = _uiState.value.copy(isStreaming = false, errorMessage = e.message)
+                _uiState.value = _uiState.value.copy(isStreaming = false, isLoading = false, errorMessage = e.message)
             }
         }
     }
 
     fun stopStream() {
-        streamJob?.cancel()
+        val jobToCancel = streamJob
         streamJob = null
 
         val vs = videoSource
@@ -3525,9 +3601,18 @@ class MainViewModel : ViewModel() {
         speechManager = null
         detector = null
 
-        _uiState.value = _uiState.value.copy(isStreaming = false, currentFrame = null, detections = emptyList())
+        _uiState.value = _uiState.value.copy(
+            isStreaming = false,
+            isLoading = false,
+            currentFrame = null,
+            detections = emptyList()
+        )
 
-        viewModelScope.launch(Dispatchers.IO) {
+        // Asynchroner Abbau wird in cleanupJob gespeichert, damit startStream darauf warten kann
+        cleanupJob = viewModelScope.launch(Dispatchers.IO) {
+            jobToCancel?.cancel()
+            jobToCancel?.join()
+
             vs?.stop()
             mt?.stop()
             sm?.shutdown()
@@ -3589,6 +3674,65 @@ class MainViewModel : ViewModel() {
     fun resetTuningConfig() {
         com.example.app_blindenstock_add_on.AppConfig.update(com.example.app_blindenstock_add_on.AppConfigState())
     }
+
+    fun removeUrl(context: Context, url: String) {
+        val currentUrls = _uiState.value.savedUrls.toMutableList()
+        currentUrls.remove(url)
+
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("saved_urls", currentUrls.joinToString(",")).apply()
+
+        val newStreamUrl = if (_uiState.value.streamUrl == url) "" else _uiState.value.streamUrl
+        _uiState.value = _uiState.value.copy(
+            streamUrl = newStreamUrl,
+            savedUrls = currentUrls
+        )
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/AppConfig.kt">
+package com.example.app_blindenstock_add_on
+
+import kotlinx.coroutines.flow.MutableStateFlow
+
+data class AppConfigState(
+    // Geh-Korridor
+    val corridorLeft: Float = 0.32f,
+    val corridorRight: Float = 0.68f,
+
+    // Warnabstände für interne Smartphone-Kamera
+    val stopFloorPhone: Float = 0.85f,
+    val personFloorPhone: Float = 0.45f,
+    val objectFloorPhone: Float = 0.50f,
+    val stairsFloorPhone: Float = 0.50f,
+
+    // Warnabstände für ESP32-Kamera
+    val stopFloorEsp: Float = 0.84f,
+    val personFloorEsp: Float = 0.62f,
+    val objectFloorEsp: Float = 0.64f,
+    val stairsFloorEsp: Float = 0.62f,
+
+    // KI-Erkennungs-Schwellenwerte
+    val confThresholdObjects: Float = 0.40f,
+    val confThresholdSurface: Float = 0.50f,
+    val nmsIouThreshold: Float = 0.40f,
+
+    // Frame-Filter (Entprellung)
+    val hazardFramesRequired: Int = 3,
+    val clearFramesRequired: Int = 6,
+
+    // Dynamik & Logik
+    val evadeLockMs: Long = 3500L,
+    val trendGrowthPerSec: Float = 0.15f
+)
+
+object AppConfig {
+    val currentState = MutableStateFlow(AppConfigState())
+
+    fun update(newState: AppConfigState) {
+        currentState.value = newState
+    }
 }
 </file>
 
@@ -3596,24 +3740,30 @@ class MainViewModel : ViewModel() {
 package com.example.app_blindenstock_add_on.framework.ui
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -3639,8 +3789,22 @@ fun StartScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
+    val isKeyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var isSaved by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+
+    val topSpacerHeight by animateDpAsState(
+        targetValue = if (isKeyboardOpen) 10.dp else 140.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "topSpacerAnimation"
+    )
+
+    val bottomSpacerHeight by animateDpAsState(
+        targetValue = if (isKeyboardOpen) 350.dp else 0.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "bottomSpacerAnimation"
+    )
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -3651,250 +3815,333 @@ fun StartScreen(
                 .fillMaxSize()
                 .systemBarsPadding()
                 .padding(24.dp)
-                .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow)),
-            verticalArrangement = Arrangement.SpaceBetween
         ) {
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Smart Cane Assistance",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "Environment Tracking & Navigation",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Surface(
-                    onClick = { showSettings = true },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
-                ) {
-                    Text(
-                        text = "Settings",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                }
-            }
-
-            Card(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(20.dp)
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Camera Connection",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        SourceOption(
-                            title = "Cane (ESP32)",
-                            isSelected = uiState.sourceType == SourceType.MJPEG,
-                            modifier = Modifier.weight(1f)
-                        ) { viewModel.updateSourceType(SourceType.MJPEG) }
-
-                        SourceOption(
-                            title = "Smartphone",
-                            isSelected = uiState.sourceType == SourceType.CAMERA,
-                            modifier = Modifier.weight(1f)
-                        ) { viewModel.updateSourceType(SourceType.CAMERA) }
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Smart-Blind-Cane",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "AI-minor Project",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
-                    // NEU: Simples Crossfade statt ruckeliger AnimatedVisibility
-                    Crossfade(
-                        targetState = uiState.sourceType,
-                        label = "sourceTypeCrossfade",
-                        animationSpec = tween(300)
-                    ) { type ->
-                        if (type == SourceType.MJPEG) {
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                OutlinedTextField(
-                                    value = uiState.streamUrl,
-                                    onValueChange = {
-                                        viewModel.updateUrl(it)
-                                        isSaved = false
-                                    },
-                                    label = { Text("Network Address") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp),
-                                    trailingIcon = {
-                                        val buttonColor by animateColorAsState(
-                                            targetValue = if (isSaved) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary,
-                                            animationSpec = tween(300), label = "saveBtnColor"
-                                        )
-                                        val contentColor by animateColorAsState(
-                                            targetValue = if (isSaved) Color.White else MaterialTheme.colorScheme.onPrimary,
-                                            animationSpec = tween(300), label = "saveContentColor"
-                                        )
+                    IconButton(
+                        onClick = { showSettings = true },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
-                                        Surface(
-                                            modifier = Modifier
-                                                .padding(end = 6.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable {
-                                                    if (!isSaved) {
-                                                        viewModel.saveUrl(context, uiState.streamUrl)
-                                                        isSaved = true
-                                                        scope.launch {
-                                                            delay(2.seconds)
-                                                            isSaved = false
+                Spacer(modifier = Modifier.height(topSpacerHeight))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        Text(
+                            text = "Camera Selection",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            SourceOption(
+                                title = "Cane (ESP32)",
+                                isSelected = uiState.sourceType == SourceType.MJPEG,
+                                modifier = Modifier.weight(1f)
+                            ) { viewModel.updateSourceType(SourceType.MJPEG) }
+
+                            SourceOption(
+                                title = "Smartphone",
+                                isSelected = uiState.sourceType == SourceType.CAMERA,
+                                modifier = Modifier.weight(1f)
+                            ) { viewModel.updateSourceType(SourceType.CAMERA) }
+                        }
+
+                        AnimatedContent(
+                            targetState = uiState.sourceType,
+                            transitionSpec = {
+                                (fadeIn(animationSpec = tween(200)) + slideInVertically(animationSpec = tween(200)) { it / 6 }) togetherWith
+                                        (fadeOut(animationSpec = tween(200)) + slideOutVertically(animationSpec = tween(200)) { -it / 6 })
+                            },
+                            label = "sourceTypeTransition"
+                        ) { type ->
+                            if (type == SourceType.MJPEG) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    OutlinedTextField(
+                                        value = uiState.streamUrl,
+                                        onValueChange = {
+                                            viewModel.updateUrl(it)
+                                            isSaved = false
+                                        },
+                                        label = { Text("Network Address") },
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .bringIntoViewRequester(bringIntoViewRequester)
+                                            .onFocusEvent { focusState ->
+                                                if (focusState.isFocused) {
+                                                    scope.launch {
+                                                        delay(100)
+                                                        bringIntoViewRequester.bringIntoView()
+                                                    }
+                                                }
+                                            },
+                                        shape = RoundedCornerShape(12.dp),
+                                        trailingIcon = {
+                                            val buttonColor by animateColorAsState(
+                                                targetValue = if (isSaved) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary,
+                                                animationSpec = tween(300), label = "saveBtnColor"
+                                            )
+                                            val contentColor by animateColorAsState(
+                                                targetValue = if (isSaved) Color.White else MaterialTheme.colorScheme.onPrimary,
+                                                animationSpec = tween(300), label = "saveContentColor"
+                                            )
+
+                                            Surface(
+                                                modifier = Modifier
+                                                    .padding(end = 6.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        if (!isSaved) {
+                                                            viewModel.saveUrl(context, uiState.streamUrl)
+                                                            isSaved = true
+                                                            scope.launch {
+                                                                delay(2.seconds)
+                                                                isSaved = false
+                                                            }
+                                                        }
+                                                    },
+                                                color = buttonColor
+                                            ) {
+                                                Box(
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    AnimatedContent(
+                                                        targetState = isSaved,
+                                                        transitionSpec = {
+                                                            (fadeIn() + scaleIn()) togetherWith (fadeOut() + scaleOut()) using SizeTransform(clip = false)
+                                                        },
+                                                        label = "save_button_animation"
+                                                    ) { savedState ->
+                                                        if (savedState) {
+                                                            Row(
+                                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Check,
+                                                                    contentDescription = "Saved",
+                                                                    tint = contentColor,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                                Text(
+                                                                    text = "Saved",
+                                                                    color = contentColor,
+                                                                    style = MaterialTheme.typography.labelMedium
+                                                                )
+                                                            }
+                                                        } else {
+                                                            Text(
+                                                                text = "Save",
+                                                                color = contentColor,
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                            )
                                                         }
                                                     }
-                                                },
-                                            color = buttonColor
+                                                }
+                                            }
+                                        }
+                                    )
+
+                                    if (uiState.savedUrls.isNotEmpty()) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Box(
-                                                modifier = Modifier.animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                AnimatedContent(
-                                                    targetState = isSaved,
-                                                    transitionSpec = {
-                                                        (fadeIn() + scaleIn()) togetherWith (fadeOut() + scaleOut()) using SizeTransform(clip = false)
-                                                    },
-                                                    label = "save_button_animation"
-                                                ) { savedState ->
-                                                    if (savedState) {
-                                                        Row(
-                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                                        ) {
-                                                            Text("✓", color = contentColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
-                                                            Text("Saved", color = contentColor, style = MaterialTheme.typography.labelMedium)
-                                                        }
-                                                    } else {
+                                            uiState.savedUrls.forEach { url ->
+                                                Surface(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
                                                         Text(
-                                                            text = "Save",
-                                                            color = contentColor,
+                                                            text = url.removePrefix("http://").removeSuffix("/stream"),
                                                             style = MaterialTheme.typography.labelMedium,
-                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .clickable {
+                                                                    viewModel.updateUrl(url)
+                                                                    isSaved = true
+                                                                    scope.launch {
+                                                                        delay(2.seconds)
+                                                                        isSaved = false
+                                                                    }
+                                                                }
                                                         )
+
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(24.dp)
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .clickable { viewModel.removeUrl(context, url) },
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Text(
+                                                                text = "✕",
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f)
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                }
+                            } else {
+                                Text(
+                                    text = "Uses the internal smartphone camera for environment tracking.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                        }
+                    }
+                }
 
-                                if (uiState.savedUrls.isNotEmpty()) {
+                if (uiState.isBackgroundRunning) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Service is Active",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                // Dynamische Ladeanzeige bei Background Mode solange FPS == 0
+                                if (uiState.currentFps > 0) {
+                                    Text(
+                                        text = "${uiState.currentFps} FPS",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        uiState.savedUrls.forEach { url ->
-                                            Surface(
-                                                onClick = {
-                                                    viewModel.updateUrl(url)
-                                                    isSaved = true
-                                                    scope.launch {
-                                                        delay(2.seconds)
-                                                        isSaved = false
-                                                    }
-                                                },
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = MaterialTheme.colorScheme.secondaryContainer
-                                            ) {
-                                                Text(
-                                                    text = url.removePrefix("http://").removeSuffix("/stream"),
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                                )
-                                            }
-                                        }
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "Connecting...",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
                                     }
                                 }
                             }
-                        } else {
-                            Text(
-                                text = "Uses the internal smartphone camera for environment tracking.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = if (uiState.currentFps > 0) "Latency: ${uiState.inferenceTime} ms" else "Waiting for stream...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                                Text(
+                                    text = if (uiState.isUserWalking) "Walking" else "Standing",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(bottomSpacerHeight))
             }
 
-            if (uiState.isBackgroundRunning) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Service is Active",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Text(
-                                text = "${uiState.currentFps} FPS",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Latency: ${uiState.inferenceTime} ms",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                            )
-                            Text(
-                                text = if (uiState.isUserWalking) "Walking" else "Standing",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                FilledTonalButton(
                     onClick = {
                         viewModel.navigateTo(AppScreen.CAMERA)
                         viewModel.startStream(context, lifecycleOwner)
                     },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = RoundedCornerShape(16.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                 ) {
                     Text("Preview & Test Mode", style = MaterialTheme.typography.titleMedium)
                 }
@@ -3902,19 +4149,27 @@ fun StartScreen(
                 if (uiState.isBackgroundRunning) {
                     Button(
                         onClick = { onStopBackground() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) {
                         Text("Stop Background Service", style = MaterialTheme.typography.titleMedium)
                     }
                 } else {
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = { onStartBackground(uiState.sourceType.name, uiState.streamUrl) },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        shape = RoundedCornerShape(16.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     ) {
-                        Text("Run in Background", style = MaterialTheme.typography.titleMedium)
+                        Text("Background Mode", style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -4135,70 +4390,29 @@ private fun SourceOption(
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(durationMillis = 300),
-        label = "sourceOptionContainer"
+        animationSpec = tween(durationMillis = 180),
+        label = "sourceContainer"
     )
     val contentColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-        animationSpec = tween(durationMillis = 300),
-        label = "sourceOptionContent"
+        animationSpec = tween(durationMillis = 180),
+        label = "sourceContent"
     )
 
     Surface(
         onClick = onClick,
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        color = containerColor,
-        tonalElevation = if (isSelected) 0.dp else 2.dp
+        color = containerColor
     ) {
         Box(modifier = Modifier.padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
-            Text(text = title, style = MaterialTheme.typography.labelLarge, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, color = contentColor)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                color = contentColor
+            )
         }
-    }
-}
-</file>
-
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/AppConfig.kt">
-package com.example.app_blindenstock_add_on
-
-import kotlinx.coroutines.flow.MutableStateFlow
-
-data class AppConfigState(
-    // Geh-Korridor
-    val corridorLeft: Float = 0.32f,
-    val corridorRight: Float = 0.68f,
-
-    // Warnabstände für interne Smartphone-Kamera
-    val stopFloorPhone: Float = 0.85f,
-    val personFloorPhone: Float = 0.45f,
-    val objectFloorPhone: Float = 0.50f,
-    val stairsFloorPhone: Float = 0.50f,
-
-    // Warnabstände für ESP32-Kamera
-    val stopFloorEsp: Float = 0.84f,
-    val personFloorEsp: Float = 0.62f,
-    val objectFloorEsp: Float = 0.64f,
-    val stairsFloorEsp: Float = 0.62f,
-
-    // KI-Erkennungs-Schwellenwerte
-    val confThresholdObjects: Float = 0.40f,
-    val confThresholdSurface: Float = 0.50f,
-    val nmsIouThreshold: Float = 0.40f,
-
-    // Frame-Filter (Entprellung)
-    val hazardFramesRequired: Int = 3,
-    val clearFramesRequired: Int = 6,
-
-    // Dynamik & Logik
-    val evadeLockMs: Long = 3500L,
-    val trendGrowthPerSec: Float = 0.15f
-)
-
-object AppConfig {
-    val currentState = MutableStateFlow(AppConfigState())
-
-    fun update(newState: AppConfigState) {
-        currentState.value = newState
     }
 }
 </file>

@@ -178,14 +178,21 @@ class AppForegroundService : Service(), LifecycleOwner {
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
+
         videoSource?.stop()
         videoSource = null
         motionTracker?.stop()
         motionTracker = null
         speechManager?.shutdown()
         speechManager = null
-        detector?.close()
+
+        // Den Detector in einer lokalen Variable zwischenspeichern und den
+        // suspend-Aufruf in einem separaten Thread feuern
+        val det = detector
         detector = null
+        CoroutineScope(Dispatchers.IO).launch {
+            det?.close()
+        }
 
         if (wifiLock?.isHeld == true) wifiLock?.release()
         if (wakeLock?.isHeld == true) wakeLock?.release()

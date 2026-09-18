@@ -8,6 +8,11 @@ import android.graphics.Paint
 import android.util.Log
 import com.example.app_blindenstock_add_on.AppConfigState
 import com.example.app_blindenstock_add_on.domain.model.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
@@ -24,15 +29,25 @@ class YoloDetector(private val context: Context) {
     private var objectGpuDelegate: GpuDelegate? = null
     private var surfaceGpuDelegate: GpuDelegate? = null
 
+    // Coroutine Mutex ersetzt @Synchronized
+    private val mutex = Mutex()
+
     private val scaledBitmap = Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888)
     private val scaleCanvas = Canvas(scaledBitmap)
     private val scaleMatrix = Matrix()
     private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    private val inputBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
+    // Zwei separate Input-Buffer für die parallele Ausführung
+    private val inputBufferObjects: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
         order(ByteOrder.nativeOrder())
     }
+    private val inputBufferSurface: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
+        order(ByteOrder.nativeOrder())
+    }
+
     private val pixelArray = IntArray(320 * 320)
+    // Schnelles JVM-Array für das Preprocessing (Bulk-Transfer)
+    private val floatArray = FloatArray(3 * 320 * 320)
 
     private val outputObjects = Array(1) { Array(84) { FloatArray(2100) } }
     private val outputSurface0 = Array(1) { Array(40) { FloatArray(2100) } }
@@ -129,78 +144,102 @@ class YoloDetector(private val context: Context) {
         return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult {
-        val startTime = System.currentTimeMillis()
-        frameSequence++
-
-        val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
-        val dx = (320f - bitmap.width * scale) / 2f
-        val dy = (320f - bitmap.height * scale) / 2f
-
-        scaleMatrix.reset()
-        scaleMatrix.postScale(scale, scale)
-        scaleMatrix.postTranslate(dx, dy)
-        scaleCanvas.drawColor(android.graphics.Color.BLACK)
-        scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
-        preprocessNCHW(scaledBitmap)
-
-        val padX = dx / 320f
-        val padY = dy / 320f
-        val activeW = (bitmap.width * scale) / 320f
-        val activeH = (bitmap.height * scale) / 320f
-
-        val rawObjects = mutableListOf<Detection>()
-        objectInterpreter?.let { interp ->
-            inputBuffer.rewind()
-            interp.run(inputBuffer, outputObjects)
-            rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH, config.confThresholdObjects))
-        }
-
-        val rawSurfaces = if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
-            val freshSurfaces = mutableListOf<Detection>()
-            surfaceInterpreter?.let { interp ->
-                inputBuffer.rewind()
-                if (surfaceHasDualOutputs) {
-                    val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
-                    interp.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
-                } else {
-                    interp.run(inputBuffer, outputSurface0)
-                }
-                freshSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
+    suspend fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult = mutex.withLock {
+        coroutineScope {
+            if (objectInterpreter == null && surfaceInterpreter == null) {
+                return@coroutineScope FrameAnalysisResult(emptyList(), CorridorAnalysis(), "unknown", 0f)
             }
-            cachedSurfaces = freshSurfaces
-            freshSurfaces
-        } else {
-            cachedSurfaces
+
+            val startTime = System.currentTimeMillis()
+            frameSequence++
+
+            val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
+            val dx = (320f - bitmap.width * scale) / 2f
+            val dy = (320f - bitmap.height * scale) / 2f
+
+            scaleMatrix.reset()
+            scaleMatrix.postScale(scale, scale)
+            scaleMatrix.postTranslate(dx, dy)
+            scaleCanvas.drawColor(android.graphics.Color.BLACK)
+            scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
+
+            // Beide Buffer mit dem optimierten Array füllen
+            preprocessNCHW(scaledBitmap, inputBufferObjects)
+            inputBufferSurface.rewind()
+            inputBufferSurface.asFloatBuffer().put(floatArray)
+
+            val padX = dx / 320f
+            val padY = dy / 320f
+            val activeW = (bitmap.width * scale) / 320f
+            val activeH = (bitmap.height * scale) / 320f
+
+            // Asynchroner Task 1: Objekterkennung
+            val deferredObjects = async(Dispatchers.Default) {
+                val rawObjects = mutableListOf<Detection>()
+                objectInterpreter?.let { interp ->
+                    inputBufferObjects.rewind()
+                    interp.run(inputBufferObjects, outputObjects)
+                    rawObjects.addAll(processObjectTensors(outputObjects[0], padX, padY, activeW, activeH, config.confThresholdObjects))
+                }
+                applyNMS(rawObjects, config.nmsIouThreshold)
+            }
+
+            // Asynchroner Task 2: Oberflächenerkennung (läuft nur jeden 2. Frame)
+            val deferredSurfaces = async(Dispatchers.Default) {
+                if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
+                    val rawSurfaces = mutableListOf<Detection>()
+                    surfaceInterpreter?.let { interp ->
+                        inputBufferSurface.rewind()
+                        if (surfaceHasDualOutputs) {
+                            val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
+                            interp.runForMultipleInputsOutputs(arrayOf(inputBufferSurface), outputs)
+                        } else {
+                            interp.run(inputBufferSurface, outputSurface0)
+                        }
+                        rawSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
+                    }
+                    cachedSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
+                }
+                cachedSurfaces
+            }
+
+            // Auf beide parallele Tasks warten
+            val filteredObjects = deferredObjects.await()
+            val filteredSurfaces = deferredSurfaces.await()
+
+            val combinedCandidates = filteredSurfaces + filteredObjects
+            val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking, config)
+
+            val topSurface = stabilizedDetections
+                .filter { it.className in listOf("sidewalk", "path", "roadway") }
+                .maxByOrNull { it.score }
+
+            lastInferenceTime = System.currentTimeMillis() - startTime
+
+            FrameAnalysisResult(
+                detections = stabilizedDetections,
+                corridor = CorridorAnalysis(),
+                primarySurface = topSurface?.className ?: "unknown",
+                surfaceConfidence = topSurface?.score ?: 0f
+            )
         }
-
-        val filteredObjects = applyNMS(rawObjects, config.nmsIouThreshold)
-        val filteredSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
-
-        val combinedCandidates = filteredSurfaces + filteredObjects
-        val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking, config)
-
-        val topSurface = stabilizedDetections
-            .filter { it.className in listOf("sidewalk", "path", "roadway") }
-            .maxByOrNull { it.score }
-
-        lastInferenceTime = System.currentTimeMillis() - startTime
-
-        return FrameAnalysisResult(
-            detections = stabilizedDetections,
-            corridor = CorridorAnalysis(),
-            primarySurface = topSurface?.className ?: "unknown",
-            surfaceConfidence = topSurface?.score ?: 0f
-        )
     }
 
-    private fun preprocessNCHW(bitmap: Bitmap) {
-        inputBuffer.rewind()
+    private fun preprocessNCHW(bitmap: Bitmap, targetBuffer: ByteBuffer) {
         bitmap.getPixels(pixelArray, 0, 320, 0, 0, 320, 320)
         val totalPixels = 320 * 320
-        for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 16) and 0xFF) * 0.003921569f)
-        for (i in 0 until totalPixels) inputBuffer.putFloat(((pixelArray[i] shr 8) and 0xFF) * 0.003921569f)
-        for (i in 0 until totalPixels) inputBuffer.putFloat((pixelArray[i] and 0xFF) * 0.003921569f)
+
+        // JVM-internes Array befüllen (keine extrem langsamen JNI-Calls pro Pixel mehr)
+        for (i in 0 until totalPixels) {
+            val pixel = pixelArray[i]
+            floatArray[i] = ((pixel shr 16) and 0xFF) * 0.003921569f
+            floatArray[totalPixels + i] = ((pixel shr 8) and 0xFF) * 0.003921569f
+            floatArray[2 * totalPixels + i] = (pixel and 0xFF) * 0.003921569f
+        }
+
+        // Ein einziger Bulk-Transfer in den nativen C++ Speicher
+        targetBuffer.rewind()
+        targetBuffer.asFloatBuffer().put(floatArray)
     }
 
     private fun processObjectTensors(data: Array<FloatArray>, padX: Float, padY: Float, activeW: Float, activeH: Float, confThreshold: Float): List<Detection> {
@@ -468,11 +507,19 @@ class YoloDetector(private val context: Context) {
         return if (union > 0f) intersection / union else 0f
     }
 
-    fun close() {
-        objectInterpreter?.close()
-        surfaceInterpreter?.close()
-        objectGpuDelegate?.close()
-        surfaceGpuDelegate?.close()
-        scaledBitmap.recycle()
+    suspend fun close() = mutex.withLock {
+        try {
+            objectInterpreter?.close()
+            surfaceInterpreter?.close()
+            objectGpuDelegate?.close()
+            surfaceGpuDelegate?.close()
+        } catch (e: Exception) {
+            Log.w("YoloDetector", "Error closing interpreters: ${e.message}")
+        } finally {
+            objectInterpreter = null
+            surfaceInterpreter = null
+            objectGpuDelegate = null
+            surfaceGpuDelegate = null
+        }
     }
 }

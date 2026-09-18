@@ -1,24 +1,30 @@
 package com.example.app_blindenstock_add_on.framework.ui
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -44,8 +50,22 @@ fun StartScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
+    val isKeyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var isSaved by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+
+    val topSpacerHeight by animateDpAsState(
+        targetValue = if (isKeyboardOpen) 10.dp else 140.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "topSpacerAnimation"
+    )
+
+    val bottomSpacerHeight by animateDpAsState(
+        targetValue = if (isKeyboardOpen) 350.dp else 0.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "bottomSpacerAnimation"
+    )
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -56,253 +76,333 @@ fun StartScreen(
                 .fillMaxSize()
                 .systemBarsPadding()
                 .padding(24.dp)
-                .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow)),
-            verticalArrangement = Arrangement.SpaceBetween
         ) {
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Smart Cane Assistance",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "Environment Tracking & Navigation",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Surface(
-                    onClick = { showSettings = true },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
-                ) {
-                    Text(
-                        text = "Settings",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                }
-            }
-
-            Card(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(20.dp)
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Camera Connection",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        SourceOption(
-                            title = "Cane (ESP32)",
-                            isSelected = uiState.sourceType == SourceType.MJPEG,
-                            modifier = Modifier.weight(1f)
-                        ) { viewModel.updateSourceType(SourceType.MJPEG) }
-
-                        SourceOption(
-                            title = "Smartphone",
-                            isSelected = uiState.sourceType == SourceType.CAMERA,
-                            modifier = Modifier.weight(1f)
-                        ) { viewModel.updateSourceType(SourceType.CAMERA) }
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Smart-Blind-Cane",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "AI-minor Project",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
-                    // NEU: Flüssige AnimatedContent Slide- & Fade-Transition
-                    AnimatedContent(
-                        targetState = uiState.sourceType,
-                        transitionSpec = {
-                            (fadeIn(animationSpec = tween(200)) + slideInVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { it / 6 }) togetherWith
-                                    (fadeOut(animationSpec = tween(200)) + slideOutVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { -it / 6 })
-                        },
-                        label = "sourceTypeTransition"
-                    ) { type ->
-                        if (type == SourceType.MJPEG) {
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                OutlinedTextField(
-                                    value = uiState.streamUrl,
-                                    onValueChange = {
-                                        viewModel.updateUrl(it)
-                                        isSaved = false
-                                    },
-                                    label = { Text("Network Address") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp),
-                                    trailingIcon = {
-                                        val buttonColor by animateColorAsState(
-                                            targetValue = if (isSaved) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary,
-                                            animationSpec = tween(300), label = "saveBtnColor"
-                                        )
-                                        val contentColor by animateColorAsState(
-                                            targetValue = if (isSaved) Color.White else MaterialTheme.colorScheme.onPrimary,
-                                            animationSpec = tween(300), label = "saveContentColor"
-                                        )
+                    IconButton(
+                        onClick = { showSettings = true },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
-                                        Surface(
-                                            modifier = Modifier
-                                                .padding(end = 6.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable {
-                                                    if (!isSaved) {
-                                                        viewModel.saveUrl(context, uiState.streamUrl)
-                                                        isSaved = true
-                                                        scope.launch {
-                                                            delay(2.seconds)
-                                                            isSaved = false
+                Spacer(modifier = Modifier.height(topSpacerHeight))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        Text(
+                            text = "Camera Selection",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            SourceOption(
+                                title = "Cane (ESP32)",
+                                isSelected = uiState.sourceType == SourceType.MJPEG,
+                                modifier = Modifier.weight(1f)
+                            ) { viewModel.updateSourceType(SourceType.MJPEG) }
+
+                            SourceOption(
+                                title = "Smartphone",
+                                isSelected = uiState.sourceType == SourceType.CAMERA,
+                                modifier = Modifier.weight(1f)
+                            ) { viewModel.updateSourceType(SourceType.CAMERA) }
+                        }
+
+                        AnimatedContent(
+                            targetState = uiState.sourceType,
+                            transitionSpec = {
+                                (fadeIn(animationSpec = tween(200)) + slideInVertically(animationSpec = tween(200)) { it / 6 }) togetherWith
+                                        (fadeOut(animationSpec = tween(200)) + slideOutVertically(animationSpec = tween(200)) { -it / 6 })
+                            },
+                            label = "sourceTypeTransition"
+                        ) { type ->
+                            if (type == SourceType.MJPEG) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    OutlinedTextField(
+                                        value = uiState.streamUrl,
+                                        onValueChange = {
+                                            viewModel.updateUrl(it)
+                                            isSaved = false
+                                        },
+                                        label = { Text("Network Address") },
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .bringIntoViewRequester(bringIntoViewRequester)
+                                            .onFocusEvent { focusState ->
+                                                if (focusState.isFocused) {
+                                                    scope.launch {
+                                                        delay(100)
+                                                        bringIntoViewRequester.bringIntoView()
+                                                    }
+                                                }
+                                            },
+                                        shape = RoundedCornerShape(12.dp),
+                                        trailingIcon = {
+                                            val buttonColor by animateColorAsState(
+                                                targetValue = if (isSaved) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary,
+                                                animationSpec = tween(300), label = "saveBtnColor"
+                                            )
+                                            val contentColor by animateColorAsState(
+                                                targetValue = if (isSaved) Color.White else MaterialTheme.colorScheme.onPrimary,
+                                                animationSpec = tween(300), label = "saveContentColor"
+                                            )
+
+                                            Surface(
+                                                modifier = Modifier
+                                                    .padding(end = 6.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        if (!isSaved) {
+                                                            viewModel.saveUrl(context, uiState.streamUrl)
+                                                            isSaved = true
+                                                            scope.launch {
+                                                                delay(2.seconds)
+                                                                isSaved = false
+                                                            }
+                                                        }
+                                                    },
+                                                color = buttonColor
+                                            ) {
+                                                Box(
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    AnimatedContent(
+                                                        targetState = isSaved,
+                                                        transitionSpec = {
+                                                            (fadeIn() + scaleIn()) togetherWith (fadeOut() + scaleOut()) using SizeTransform(clip = false)
+                                                        },
+                                                        label = "save_button_animation"
+                                                    ) { savedState ->
+                                                        if (savedState) {
+                                                            Row(
+                                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Check,
+                                                                    contentDescription = "Saved",
+                                                                    tint = contentColor,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                                Text(
+                                                                    text = "Saved",
+                                                                    color = contentColor,
+                                                                    style = MaterialTheme.typography.labelMedium
+                                                                )
+                                                            }
+                                                        } else {
+                                                            Text(
+                                                                text = "Save",
+                                                                color = contentColor,
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                            )
                                                         }
                                                     }
-                                                },
-                                            color = buttonColor
+                                                }
+                                            }
+                                        }
+                                    )
+
+                                    if (uiState.savedUrls.isNotEmpty()) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Box(
-                                                modifier = Modifier.animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                AnimatedContent(
-                                                    targetState = isSaved,
-                                                    transitionSpec = {
-                                                        (fadeIn() + scaleIn()) togetherWith (fadeOut() + scaleOut()) using SizeTransform(clip = false)
-                                                    },
-                                                    label = "save_button_animation"
-                                                ) { savedState ->
-                                                    if (savedState) {
-                                                        Row(
-                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                                        ) {
-                                                            Text("✓", color = contentColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
-                                                            Text("Saved", color = contentColor, style = MaterialTheme.typography.labelMedium)
-                                                        }
-                                                    } else {
+                                            uiState.savedUrls.forEach { url ->
+                                                Surface(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
                                                         Text(
-                                                            text = "Save",
-                                                            color = contentColor,
+                                                            text = url.removePrefix("http://").removeSuffix("/stream"),
                                                             style = MaterialTheme.typography.labelMedium,
-                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .clickable {
+                                                                    viewModel.updateUrl(url)
+                                                                    isSaved = true
+                                                                    scope.launch {
+                                                                        delay(2.seconds)
+                                                                        isSaved = false
+                                                                    }
+                                                                }
                                                         )
+
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(24.dp)
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .clickable { viewModel.removeUrl(context, url) },
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Text(
+                                                                text = "✕",
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f)
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                }
+                            } else {
+                                Text(
+                                    text = "Uses the internal smartphone camera for environment tracking.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                        }
+                    }
+                }
 
-                                if (uiState.savedUrls.isNotEmpty()) {
+                if (uiState.isBackgroundRunning) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Service is Active",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                // Dynamische Ladeanzeige bei Background Mode solange FPS == 0
+                                if (uiState.currentFps > 0) {
+                                    Text(
+                                        text = "${uiState.currentFps} FPS",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
                                     Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        uiState.savedUrls.forEach { url ->
-                                            Surface(
-                                                onClick = {
-                                                    viewModel.updateUrl(url)
-                                                    isSaved = true
-                                                    scope.launch {
-                                                        delay(2.seconds)
-                                                        isSaved = false
-                                                    }
-                                                },
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = MaterialTheme.colorScheme.secondaryContainer
-                                            ) {
-                                                Text(
-                                                    text = url.removePrefix("http://").removeSuffix("/stream"),
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                                )
-                                            }
-                                        }
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "Connecting...",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
                                     }
                                 }
                             }
-                        } else {
-                            Text(
-                                text = "Uses the internal smartphone camera for environment tracking.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = if (uiState.currentFps > 0) "Latency: ${uiState.inferenceTime} ms" else "Waiting for stream...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                                Text(
+                                    text = if (uiState.isUserWalking) "Walking" else "Standing",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(bottomSpacerHeight))
             }
 
-            if (uiState.isBackgroundRunning) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Service is Active",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Text(
-                                text = "${uiState.currentFps} FPS",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Latency: ${uiState.inferenceTime} ms",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                            )
-                            Text(
-                                text = if (uiState.isUserWalking) "Walking" else "Standing",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                FilledTonalButton(
                     onClick = {
                         viewModel.navigateTo(AppScreen.CAMERA)
                         viewModel.startStream(context, lifecycleOwner)
                     },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = RoundedCornerShape(16.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                 ) {
                     Text("Preview & Test Mode", style = MaterialTheme.typography.titleMedium)
                 }
@@ -310,19 +410,27 @@ fun StartScreen(
                 if (uiState.isBackgroundRunning) {
                     Button(
                         onClick = { onStopBackground() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) {
                         Text("Stop Background Service", style = MaterialTheme.typography.titleMedium)
                     }
                 } else {
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = { onStartBackground(uiState.sourceType.name, uiState.streamUrl) },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        shape = RoundedCornerShape(16.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     ) {
-                        Text("Run in Background", style = MaterialTheme.typography.titleMedium)
+                        Text("Background Mode", style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -543,24 +651,28 @@ private fun SourceOption(
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(durationMillis = 300),
-        label = "sourceOptionContainer"
+        animationSpec = tween(durationMillis = 180),
+        label = "sourceContainer"
     )
     val contentColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-        animationSpec = tween(durationMillis = 300),
-        label = "sourceOptionContent"
+        animationSpec = tween(durationMillis = 180),
+        label = "sourceContent"
     )
 
     Surface(
         onClick = onClick,
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        color = containerColor,
-        tonalElevation = if (isSelected) 0.dp else 2.dp
+        color = containerColor
     ) {
         Box(modifier = Modifier.padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
-            Text(text = title, style = MaterialTheme.typography.labelLarge, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, color = contentColor)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                color = contentColor
+            )
         }
     }
 }

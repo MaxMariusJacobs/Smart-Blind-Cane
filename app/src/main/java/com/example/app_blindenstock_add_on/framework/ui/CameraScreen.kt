@@ -164,11 +164,22 @@ fun CameraScreen(viewModel: MainViewModel) {
                     }
 
                 } else {
-                    Text(
-                        text = "Connecting camera...",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color.White.copy(alpha = 0.7f)
-                    )
+                    // Animierte Ladeanzeige während des Kameraverbindungsaufbaus
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
+                        )
+                        Text(
+                            text = "Connecting camera...",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
                 }
             }
 
@@ -229,7 +240,7 @@ fun CameraScreen(viewModel: MainViewModel) {
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {
                 Text(
-                    text = "Stop Pipeline",
+                    text = "Stop",
                     style = MaterialTheme.typography.titleMedium
                 )
             }

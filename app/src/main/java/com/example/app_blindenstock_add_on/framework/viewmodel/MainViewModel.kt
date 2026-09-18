@@ -40,10 +40,11 @@ data class MainUiState(
     val isRoadwayAlertsEnabled: Boolean = false,
     val detectionLogs: List<String> = emptyList(),
     val errorMessage: String? = null,
-    val streamUrl: String = "", // <--- Startet jetzt immer leer
-    val savedUrls: List<String> = emptyList(), // <--- NEU: Speichert bis zu 3 Adressen
+    val streamUrl: String = "",
+    val savedUrls: List<String> = emptyList(),
     val sourceType: SourceType = SourceType.MJPEG,
     val isStreaming: Boolean = false,
+    val isLoading: Boolean = false,
     val isBackgroundRunning: Boolean = false,
     val isUserWalking: Boolean = false,
     val inferenceTime: Long = 0,
@@ -56,6 +57,8 @@ class MainViewModel : ViewModel() {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var streamJob: Job? = null
+    private var cleanupJob: Job? = null // Synchronisiert den Abbau der Ressourcen
+
     private var videoSource: VideoSource? = null
     private var detector: YoloDetector? = null
     private var motionTracker: UserMotionTracker? = null
@@ -102,7 +105,7 @@ class MainViewModel : ViewModel() {
         val urls = savedString.split(",").filter { it.isNotBlank() }
 
         _uiState.value = _uiState.value.copy(
-            streamUrl = "", // Bewusst leer lassen beim Start
+            streamUrl = "",
             savedUrls = urls
         )
     }
@@ -112,9 +115,9 @@ class MainViewModel : ViewModel() {
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
 
         val currentUrls = _uiState.value.savedUrls.toMutableList()
-        currentUrls.remove(url) // Duplikat entfernen, falls schon vorhanden
-        currentUrls.add(0, url) // Als neueste an Position 1 setzen
-        val trimmedUrls = currentUrls.take(3) // Nur die letzten 3 behalten
+        currentUrls.remove(url)
+        currentUrls.add(0, url)
+        val trimmedUrls = currentUrls.take(3)
 
         prefs.edit().putString("saved_urls", trimmedUrls.joinToString(",")).apply()
 
@@ -125,7 +128,8 @@ class MainViewModel : ViewModel() {
     }
 
     fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        if (_uiState.value.isStreaming) return
+        // Verhindert doppelte Starts während das Modell noch lädt
+        if (_uiState.value.isStreaming || _uiState.value.isLoading) return
 
         val urlToUse = _uiState.value.streamUrl
         if (_uiState.value.sourceType == SourceType.MJPEG && urlToUse.isBlank()) {
@@ -144,9 +148,12 @@ class MainViewModel : ViewModel() {
         fpsWindowStart = System.currentTimeMillis()
         smoothedFps = 0
 
-        _uiState.value = _uiState.value.copy(isStreaming = true)
+        _uiState.value = _uiState.value.copy(isStreaming = true, isLoading = true)
 
         streamJob = viewModelScope.launch(Dispatchers.Default) {
+            // WICHTIG: Warte bis alte Streams/Modelle restlos aus dem RAM gelöscht sind
+            cleanupJob?.join()
+
             detector = YoloDetector(context)
             speechManager = SpeechFeedbackManager(context)
             motionTracker = UserMotionTracker(context).apply { start() }
@@ -206,18 +213,19 @@ class MainViewModel : ViewModel() {
                             detectionLogs = updatedLogs,
                             inferenceTime = infTime,
                             currentFps = smoothedFps,
-                            isUserWalking = isWalking
+                            isUserWalking = isWalking,
+                            isLoading = false // Erstes Bild erfolgreich empfangen
                         )
                     }
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Stream error: ${e.message}", e)
-                _uiState.value = _uiState.value.copy(isStreaming = false, errorMessage = e.message)
+                _uiState.value = _uiState.value.copy(isStreaming = false, isLoading = false, errorMessage = e.message)
             }
         }
     }
 
     fun stopStream() {
-        streamJob?.cancel()
+        val jobToCancel = streamJob
         streamJob = null
 
         val vs = videoSource
@@ -230,9 +238,18 @@ class MainViewModel : ViewModel() {
         speechManager = null
         detector = null
 
-        _uiState.value = _uiState.value.copy(isStreaming = false, currentFrame = null, detections = emptyList())
+        _uiState.value = _uiState.value.copy(
+            isStreaming = false,
+            isLoading = false,
+            currentFrame = null,
+            detections = emptyList()
+        )
 
-        viewModelScope.launch(Dispatchers.IO) {
+        // Asynchroner Abbau wird in cleanupJob gespeichert, damit startStream darauf warten kann
+        cleanupJob = viewModelScope.launch(Dispatchers.IO) {
+            jobToCancel?.cancel()
+            jobToCancel?.join()
+
             vs?.stop()
             mt?.stop()
             sm?.shutdown()
@@ -293,5 +310,19 @@ class MainViewModel : ViewModel() {
 
     fun resetTuningConfig() {
         com.example.app_blindenstock_add_on.AppConfig.update(com.example.app_blindenstock_add_on.AppConfigState())
+    }
+
+    fun removeUrl(context: Context, url: String) {
+        val currentUrls = _uiState.value.savedUrls.toMutableList()
+        currentUrls.remove(url)
+
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("saved_urls", currentUrls.joinToString(",")).apply()
+
+        val newStreamUrl = if (_uiState.value.streamUrl == url) "" else _uiState.value.streamUrl
+        _uiState.value = _uiState.value.copy(
+            streamUrl = newStreamUrl,
+            savedUrls = currentUrls
+        )
     }
 }

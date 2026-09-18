@@ -81,12 +81,13 @@ class LocalCameraSource(
     }
 
     override fun stop() {
-        cameraExecutor.shutdown()
         ContextCompat.getMainExecutor(context).execute {
             try {
                 cameraProvider?.unbindAll()
             } catch (e: Exception) {
                 Log.e("LocalCameraSource", "Unbind failed", e)
+            } finally {
+                cameraExecutor.shutdown()
             }
         }
     }

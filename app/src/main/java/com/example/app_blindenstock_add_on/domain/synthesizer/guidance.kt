@@ -58,39 +58,48 @@ object GuidanceSynthesizer {
             hazardFrameCounter++
             clearFrameCounter = 0
             if (hazardFrameCounter >= config.hazardFramesRequired) {
+                val tLeft = imminentThreat.boundingBox.x
+                val tRight = imminentThreat.boundingBox.x + imminentThreat.boundingBox.width
+                val tCx = tLeft + imminentThreat.boundingBox.width / 2f
+
+                val threatBlocksLeft = tLeft < 0.25f
+                val threatBlocksRight = tRight > 0.75f
+                val flankThreshold = 0.60f
+
+                val hasObstacleLeft = threatBlocksLeft || detections.any {
+                    it != imminentThreat &&
+                            (allowRoadwayAlerts || it.className != "roadway") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+                val hasObstacleRight = threatBlocksRight || detections.any {
+                    it != imminentThreat &&
+                            (allowRoadwayAlerts || it.className != "roadway") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+
+                // Dynamische Flankenauswertung
+                val currentBestDirection = when {
+                    !hasObstacleLeft && !hasObstacleRight -> if (tCx >= 0.50f) "Turn left" else "Turn right"
+                    !hasObstacleLeft -> "Turn left"
+                    !hasObstacleRight -> "Turn right"
+                    else -> "Path blocked"
+                }
+
                 if (!isStopActive) {
                     isStopActive = true
-
-                    val tLeft = imminentThreat.boundingBox.x
-                    val tRight = imminentThreat.boundingBox.x + imminentThreat.boundingBox.width
-                    val tCx = tLeft + imminentThreat.boundingBox.width / 2f
-
-                    val threatBlocksLeft = tLeft < 0.25f
-                    val threatBlocksRight = tRight > 0.75f
-
-                    val flankThreshold = 0.60f
-
-                    val hasObstacleLeft = threatBlocksLeft || detections.any {
-                        it != imminentThreat &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-                    val hasObstacleRight = threatBlocksRight || detections.any {
-                        it != imminentThreat &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-
-                    stopEvadeDirection = when {
-                        !hasObstacleLeft && !hasObstacleRight -> if (tCx >= 0.50f) "Turn left" else "Turn right"
-                        !hasObstacleLeft -> "Turn left"
-                        !hasObstacleRight -> "Turn right"
-                        else -> "Path blocked"
-                    }
+                    stopEvadeDirection = currentBestDirection
                     return GuidanceOutput("Stop!", isEmergency = true, priorityLevel = 3)
                 } else {
+                    // Falls "Path blocked" aktiv war oder die bisherige Richtung neu versperrt ist, sofort aktualisieren
+                    if (stopEvadeDirection == "Path blocked" ||
+                        (stopEvadeDirection == "Turn left" && hasObstacleLeft) ||
+                        (stopEvadeDirection == "Turn right" && hasObstacleRight)
+                    ) {
+                        stopEvadeDirection = currentBestDirection
+                    }
+
                     val phrase = if (stopEvadeDirection == "Path blocked") "Path blocked." else "$stopEvadeDirection."
                     return GuidanceOutput(phrase, isEmergency = true, priorityLevel = 3)
                 }
@@ -153,37 +162,50 @@ object GuidanceSynthesizer {
             clearFrameCounter = 0
 
             if (hazardFrameCounter >= config.hazardFramesRequired) {
-                val isLockExpired = (now - lastEvadeLockTime) > config.evadeLockMs
+                val pLeft = corridorPerson.boundingBox.x
+                val pRight = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width
+                val pCx = pLeft + corridorPerson.boundingBox.width / 2f
+
+                val personBlocksLeft = pLeft < 0.25f
+                val personBlocksRight = pRight > 0.75f
+                val flankThreshold = 0.62f
+
+                val hasObstacleLeft = personBlocksLeft || detections.any {
+                    it != corridorPerson &&
+                            (allowRoadwayAlerts || it.className != "roadway") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+                val hasObstacleRight = personBlocksRight || detections.any {
+                    it != corridorPerson &&
+                            (allowRoadwayAlerts || it.className != "roadway") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+
+                val currentSide = when {
+                    !hasObstacleLeft && !hasObstacleRight -> if (pCx >= 0.50f) "step left" else "step right"
+                    !hasObstacleLeft -> "step left"
+                    !hasObstacleRight -> "step right"
+                    else -> "path blocked"
+                }
+
+                // Lock erlischt bei Timeout ODER wenn "path blocked" aktiv war und sich eine Flanke öffnet
+                val isLockExpired = (now - lastEvadeLockTime) > config.evadeLockMs ||
+                        (lockedEvadeSide == "path blocked" && currentSide != "path blocked")
+
                 if (isLockExpired) {
-                    val pLeft = corridorPerson.boundingBox.x
-                    val pRight = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width
-                    val pCx = pLeft + corridorPerson.boundingBox.width / 2f
-
-                    val personBlocksLeft = pLeft < 0.25f
-                    val personBlocksRight = pRight > 0.75f
-                    val flankThreshold = 0.62f
-
-                    val hasObstacleLeft = personBlocksLeft || detections.any {
-                        it != corridorPerson &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-                    val hasObstacleRight = personBlocksRight || detections.any {
-                        it != corridorPerson &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-
-                    lockedEvadeSide = when {
-                        !hasObstacleLeft && !hasObstacleRight -> if (pCx >= 0.50f) "step left" else "step right"
-                        !hasObstacleLeft -> "step left"
-                        !hasObstacleRight -> "step right"
-                        else -> "path blocked"
-                    }
+                    lockedEvadeSide = currentSide
+                    lastEvadeLockTime = now
+                } else if (
+                    (lockedEvadeSide == "step left" && hasObstacleLeft) ||
+                    (lockedEvadeSide == "step right" && hasObstacleRight)
+                ) {
+                    // Sofortiger Wechsel falls die gewählte Richtung versperrt wurde
+                    lockedEvadeSide = currentSide
                     lastEvadeLockTime = now
                 }
+
                 val phrase = if (lockedEvadeSide == "path blocked") "Person ahead, path blocked." else "Person ahead, $lockedEvadeSide."
                 return GuidanceOutput(phrase, isEmergency = false, priorityLevel = 2)
             }
