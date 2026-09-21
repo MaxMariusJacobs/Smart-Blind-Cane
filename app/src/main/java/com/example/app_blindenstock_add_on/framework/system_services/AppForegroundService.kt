@@ -71,7 +71,7 @@ class AppForegroundService : Service(), LifecycleOwner {
         private const val NOTIFICATION_ID = 1
 
         @Volatile
-        var allowRoadwayAlerts: Boolean = false
+        var allowSurfaceScans: Boolean = false
 
         private val _metrics = MutableStateFlow(ServiceMetrics())
         val metrics: StateFlow<ServiceMetrics> = _metrics.asStateFlow()
@@ -98,8 +98,8 @@ class AppForegroundService : Service(), LifecycleOwner {
 
         val sourceType = intent?.getStringExtra("EXTRA_SOURCE_TYPE") ?: "MJPEG"
         val url = intent?.getStringExtra("EXTRA_STREAM_URL") ?: "http://192.168.4.1/stream"
-        if (intent?.hasExtra("EXTRA_ALLOW_ROADWAY") == true) {
-            allowRoadwayAlerts = intent.getBooleanExtra("EXTRA_ALLOW_ROADWAY", false)
+        if (intent?.hasExtra("EXTRA_ALLOW_SURFACE") == true) {
+            allowSurfaceScans = intent.getBooleanExtra("EXTRA_ALLOW_SURFACE", false)
         }
 
         val isEspMode = (sourceType != "CAMERA")
@@ -145,12 +145,12 @@ class AppForegroundService : Service(), LifecycleOwner {
                         val isWalking = motionTracker?.isUserWalking ?: false
                         val currentConfig = AppConfig.currentState.value
 
-                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
+                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig, allowSurfaceScans) ?: return@collect
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = analysisResult,
                             isUserWalking = isWalking,
-                            allowRoadwayAlerts = allowRoadwayAlerts,
+                            allowSurfaceScans = allowSurfaceScans,
                             isEsp32 = isEspMode,
                             config = currentConfig
                         )
@@ -186,8 +186,6 @@ class AppForegroundService : Service(), LifecycleOwner {
         speechManager?.shutdown()
         speechManager = null
 
-        // Den Detector in einer lokalen Variable zwischenspeichern und den
-        // suspend-Aufruf in einem separaten Thread feuern
         val det = detector
         detector = null
         CoroutineScope(Dispatchers.IO).launch {

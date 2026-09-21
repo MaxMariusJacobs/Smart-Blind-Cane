@@ -29,7 +29,6 @@ class YoloDetector(private val context: Context) {
     private var objectGpuDelegate: GpuDelegate? = null
     private var surfaceGpuDelegate: GpuDelegate? = null
 
-    // Coroutine Mutex ersetzt @Synchronized
     private val mutex = Mutex()
 
     private val scaledBitmap = Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888)
@@ -37,7 +36,6 @@ class YoloDetector(private val context: Context) {
     private val scaleMatrix = Matrix()
     private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    // Zwei separate Input-Buffer für die parallele Ausführung
     private val inputBufferObjects: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
         order(ByteOrder.nativeOrder())
     }
@@ -46,7 +44,6 @@ class YoloDetector(private val context: Context) {
     }
 
     private val pixelArray = IntArray(320 * 320)
-    // Schnelles JVM-Array für das Preprocessing (Bulk-Transfer)
     private val floatArray = FloatArray(3 * 320 * 320)
 
     private val outputObjects = Array(1) { Array(84) { FloatArray(2100) } }
@@ -144,7 +141,12 @@ class YoloDetector(private val context: Context) {
         return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    suspend fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult = mutex.withLock {
+    suspend fun detect(
+        bitmap: Bitmap,
+        isUserWalking: Boolean = true,
+        config: AppConfigState,
+        runSurfaceModel: Boolean = true
+    ): FrameAnalysisResult = mutex.withLock {
         coroutineScope {
             if (objectInterpreter == null && surfaceInterpreter == null) {
                 return@coroutineScope FrameAnalysisResult(emptyList(), CorridorAnalysis(), "unknown", 0f)
@@ -163,17 +165,17 @@ class YoloDetector(private val context: Context) {
             scaleCanvas.drawColor(android.graphics.Color.BLACK)
             scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
 
-            // Beide Buffer mit dem optimierten Array füllen
             preprocessNCHW(scaledBitmap, inputBufferObjects)
-            inputBufferSurface.rewind()
-            inputBufferSurface.asFloatBuffer().put(floatArray)
+            if (runSurfaceModel) {
+                inputBufferSurface.rewind()
+                inputBufferSurface.asFloatBuffer().put(floatArray)
+            }
 
             val padX = dx / 320f
             val padY = dy / 320f
             val activeW = (bitmap.width * scale) / 320f
             val activeH = (bitmap.height * scale) / 320f
 
-            // Asynchroner Task 1: Objekterkennung
             val deferredObjects = async(Dispatchers.Default) {
                 val rawObjects = mutableListOf<Detection>()
                 objectInterpreter?.let { interp ->
@@ -184,26 +186,28 @@ class YoloDetector(private val context: Context) {
                 applyNMS(rawObjects, config.nmsIouThreshold)
             }
 
-            // Asynchroner Task 2: Oberflächenerkennung (läuft nur jeden 2. Frame)
             val deferredSurfaces = async(Dispatchers.Default) {
-                if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
-                    val rawSurfaces = mutableListOf<Detection>()
-                    surfaceInterpreter?.let { interp ->
-                        inputBufferSurface.rewind()
-                        if (surfaceHasDualOutputs) {
-                            val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
-                            interp.runForMultipleInputsOutputs(arrayOf(inputBufferSurface), outputs)
-                        } else {
-                            interp.run(inputBufferSurface, outputSurface0)
-                        }
-                        rawSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
-                    }
-                    cachedSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
+                if (!runSurfaceModel) {
+                    cachedSurfaces = emptyList()
+                    return@async emptyList<Detection>()
                 }
+
+                val rawSurfaces = mutableListOf<Detection>()
+                surfaceInterpreter?.let { interp ->
+                    inputBufferSurface.rewind()
+                    if (surfaceHasDualOutputs) {
+                        val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
+                        interp.runForMultipleInputsOutputs(arrayOf(inputBufferSurface), outputs)
+                    } else {
+                        interp.run(inputBufferSurface, outputSurface0)
+                    }
+                    rawSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
+                }
+                cachedSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
+
                 cachedSurfaces
             }
 
-            // Auf beide parallele Tasks warten
             val filteredObjects = deferredObjects.await()
             val filteredSurfaces = deferredSurfaces.await()
 
@@ -229,7 +233,6 @@ class YoloDetector(private val context: Context) {
         bitmap.getPixels(pixelArray, 0, 320, 0, 0, 320, 320)
         val totalPixels = 320 * 320
 
-        // JVM-internes Array befüllen (keine extrem langsamen JNI-Calls pro Pixel mehr)
         for (i in 0 until totalPixels) {
             val pixel = pixelArray[i]
             floatArray[i] = ((pixel shr 16) and 0xFF) * 0.003921569f
@@ -237,7 +240,6 @@ class YoloDetector(private val context: Context) {
             floatArray[2 * totalPixels + i] = (pixel and 0xFF) * 0.003921569f
         }
 
-        // Ein einziger Bulk-Transfer in den nativen C++ Speicher
         targetBuffer.rewind()
         targetBuffer.asFloatBuffer().put(floatArray)
     }
@@ -393,8 +395,8 @@ class YoloDetector(private val context: Context) {
                 }
 
                 val priority = when {
-                    floorY > 0.80f || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
-                    trend == "growing" || floorY > 0.60f -> "HIGH"
+                    floorY > 0.80f || area >= config.stopAreaPhone || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
+                    trend == "growing" || floorY > 0.60f || area >= config.warningAreaPhone -> "HIGH"
                     floorY > 0.40f -> "MEDIUM"
                     else -> "LOW"
                 }
@@ -428,6 +430,7 @@ class YoloDetector(private val context: Context) {
                 val b = rawDet.boundingBox
                 val cx = b.x + b.width / 2f
                 val floorY = b.y + b.height
+                val area = b.width * b.height
 
                 val clockPos = when {
                     cx < 0.35f -> "10_o_clock"
@@ -438,8 +441,8 @@ class YoloDetector(private val context: Context) {
                 }
 
                 val priority = when {
-                    floorY > 0.80f -> "CRITICAL"
-                    floorY > 0.60f -> "HIGH"
+                    floorY > 0.80f || area >= config.stopAreaPhone -> "CRITICAL"
+                    floorY > 0.60f || area >= config.warningAreaPhone -> "HIGH"
                     else -> "LOW"
                 }
 

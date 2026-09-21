@@ -37,7 +37,7 @@ data class MainUiState(
     val corridor: CorridorAnalysis = CorridorAnalysis(),
     val primarySurface: String = "unknown",
     val currentGuidancePhrase: String = "Clear",
-    val isRoadwayAlertsEnabled: Boolean = false,
+    val isSurfaceScanEnabled: Boolean = false,
     val detectionLogs: List<String> = emptyList(),
     val errorMessage: String? = null,
     val streamUrl: String = "",
@@ -57,7 +57,7 @@ class MainViewModel : ViewModel() {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var streamJob: Job? = null
-    private var cleanupJob: Job? = null // Synchronisiert den Abbau der Ressourcen
+    private var cleanupJob: Job? = null
 
     private var videoSource: VideoSource? = null
     private var detector: YoloDetector? = null
@@ -93,10 +93,10 @@ class MainViewModel : ViewModel() {
     fun updateSourceType(type: SourceType) { _uiState.value = _uiState.value.copy(sourceType = type) }
     fun setBackgroundRunning(running: Boolean) { _uiState.value = _uiState.value.copy(isBackgroundRunning = running) }
 
-    fun toggleRoadwayAlerts() {
-        val next = !_uiState.value.isRoadwayAlertsEnabled
-        _uiState.value = _uiState.value.copy(isRoadwayAlertsEnabled = next)
-        AppForegroundService.allowRoadwayAlerts = next
+    fun toggleSurfaceScan() {
+        val next = !_uiState.value.isSurfaceScanEnabled
+        _uiState.value = _uiState.value.copy(isSurfaceScanEnabled = next)
+        AppForegroundService.allowSurfaceScans = next
     }
 
     fun loadUrl(context: Context) {
@@ -128,7 +128,6 @@ class MainViewModel : ViewModel() {
     }
 
     fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        // Verhindert doppelte Starts während das Modell noch lädt
         if (_uiState.value.isStreaming || _uiState.value.isLoading) return
 
         val urlToUse = _uiState.value.streamUrl
@@ -151,7 +150,6 @@ class MainViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(isStreaming = true, isLoading = true)
 
         streamJob = viewModelScope.launch(Dispatchers.Default) {
-            // WICHTIG: Warte bis alte Streams/Modelle restlos aus dem RAM gelöscht sind
             cleanupJob?.join()
 
             detector = YoloDetector(context)
@@ -185,14 +183,15 @@ class MainViewModel : ViewModel() {
 
                         val isWalking = motionTracker?.isUserWalking ?: false
                         val currentConfig = AppConfig.currentState.value
+                        val runSurface = _uiState.value.isSurfaceScanEnabled
 
-                        val result = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
+                        val result = detector?.detect(bitmap, isWalking, currentConfig, runSurface) ?: return@collect
                         val infTime = detector?.lastInferenceTime ?: 0L
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = result,
                             isUserWalking = isWalking,
-                            allowRoadwayAlerts = _uiState.value.isRoadwayAlertsEnabled,
+                            allowSurfaceScans = runSurface,
                             isEsp32 = isEspMode,
                             config = currentConfig
                         )
@@ -214,7 +213,7 @@ class MainViewModel : ViewModel() {
                             inferenceTime = infTime,
                             currentFps = smoothedFps,
                             isUserWalking = isWalking,
-                            isLoading = false // Erstes Bild erfolgreich empfangen
+                            isLoading = false
                         )
                     }
             } catch (e: Exception) {
@@ -245,7 +244,6 @@ class MainViewModel : ViewModel() {
             detections = emptyList()
         )
 
-        // Asynchroner Abbau wird in cleanupJob gespeichert, damit startStream darauf warten kann
         cleanupJob = viewModelScope.launch(Dispatchers.IO) {
             jobToCancel?.cancel()
             jobToCancel?.join()
@@ -272,14 +270,21 @@ class MainViewModel : ViewModel() {
             putFloat("personFloorPhone", s.personFloorPhone)
             putFloat("objectFloorPhone", s.objectFloorPhone)
             putFloat("stairsFloorPhone", s.stairsFloorPhone)
+            putFloat("stopAreaPhone", s.stopAreaPhone)
+            putFloat("warningAreaPhone", s.warningAreaPhone)
+
             putFloat("stopFloorEsp", s.stopFloorEsp)
             putFloat("personFloorEsp", s.personFloorEsp)
             putFloat("objectFloorEsp", s.objectFloorEsp)
             putFloat("stairsFloorEsp", s.stairsFloorEsp)
+            putFloat("stopAreaEsp", s.stopAreaEsp)
+            putFloat("warningAreaEsp", s.warningAreaEsp)
+
             putFloat("confThresholdObjects", s.confThresholdObjects)
             putFloat("confThresholdSurface", s.confThresholdSurface)
             putFloat("nmsIouThreshold", s.nmsIouThreshold)
             putInt("hazardFramesRequired", s.hazardFramesRequired)
+            putInt("surfaceFramesRequired", s.surfaceFramesRequired)
             putInt("clearFramesRequired", s.clearFramesRequired)
         }.apply()
     }
@@ -295,14 +300,21 @@ class MainViewModel : ViewModel() {
             personFloorPhone = prefs.getFloat("personFloorPhone", 0.45f),
             objectFloorPhone = prefs.getFloat("objectFloorPhone", 0.50f),
             stairsFloorPhone = prefs.getFloat("stairsFloorPhone", 0.50f),
+            stopAreaPhone = prefs.getFloat("stopAreaPhone", 0.35f),
+            warningAreaPhone = prefs.getFloat("warningAreaPhone", 0.15f),
+
             stopFloorEsp = prefs.getFloat("stopFloorEsp", 0.84f),
             personFloorEsp = prefs.getFloat("personFloorEsp", 0.62f),
             objectFloorEsp = prefs.getFloat("objectFloorEsp", 0.64f),
             stairsFloorEsp = prefs.getFloat("stairsFloorEsp", 0.62f),
+            stopAreaEsp = prefs.getFloat("stopAreaEsp", 0.35f),
+            warningAreaEsp = prefs.getFloat("warningAreaEsp", 0.15f),
+
             confThresholdObjects = prefs.getFloat("confThresholdObjects", 0.40f),
             confThresholdSurface = prefs.getFloat("confThresholdSurface", 0.50f),
             nmsIouThreshold = prefs.getFloat("nmsIouThreshold", 0.40f),
             hazardFramesRequired = prefs.getInt("hazardFramesRequired", 3),
+            surfaceFramesRequired = prefs.getInt("surfaceFramesRequired", 8),
             clearFramesRequired = prefs.getInt("clearFramesRequired", 6)
         )
         com.example.app_blindenstock_add_on.AppConfig.update(loaded)

@@ -1,9 +1,9 @@
 package com.example.app_blindenstock_add_on.framework.ui
 
 import androidx.compose.animation.*
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -334,7 +334,6 @@ fun StartScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
-                                // Dynamische Ladeanzeige bei Background Mode solange FPS == 0
                                 if (uiState.currentFps > 0) {
                                     Text(
                                         text = "${uiState.currentFps} FPS",
@@ -392,9 +391,12 @@ fun StartScreen(
             ) {
                 FilledTonalButton(
                     onClick = {
-                        viewModel.navigateTo(AppScreen.CAMERA)
-                        viewModel.startStream(context, lifecycleOwner)
+                        if (!uiState.isLoading) {
+                            viewModel.navigateTo(AppScreen.CAMERA)
+                            viewModel.startStream(context, lifecycleOwner)
+                        }
                     },
+                    enabled = !uiState.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp),
@@ -404,7 +406,21 @@ fun StartScreen(
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 ) {
-                    Text("Preview & Test Mode", style = MaterialTheme.typography.titleMedium)
+                    if (uiState.isLoading && uiState.isStreaming) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.5.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text("Connecting Camera...", style = MaterialTheme.typography.titleMedium)
+                        }
+                    } else {
+                        Text("Preview & Test Mode", style = MaterialTheme.typography.titleMedium)
+                    }
                 }
 
                 if (uiState.isBackgroundRunning) {
@@ -421,6 +437,7 @@ fun StartScreen(
                 } else {
                     FilledTonalButton(
                         onClick = { onStartBackground(uiState.sourceType.name, uiState.streamUrl) },
+                        enabled = !uiState.isLoading,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp),
@@ -452,7 +469,7 @@ fun StartScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    Text("Live Tuning Parameters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Live Tuning Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 }
 
                 item {
@@ -460,60 +477,64 @@ fun StartScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
-                            onClick = { viewModel.saveTuningConfig(context) },
+                        AnimatedSettingsButton(
+                            text = "Save",
+                            successText = "Save",
+                            isOutlined = false,
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Save")
-                        }
-                        OutlinedButton(
-                            onClick = { viewModel.loadTuningConfig(context) },
+                            onClick = { viewModel.saveTuningConfig(context) }
+                        )
+                        AnimatedSettingsButton(
+                            text = "Load",
+                            successText = "Load",
+                            isOutlined = true,
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Load")
-                        }
-                        OutlinedButton(
-                            onClick = { viewModel.resetTuningConfig() },
+                            onClick = { viewModel.loadTuningConfig(context) }
+                        )
+                        AnimatedSettingsButton(
+                            text = "Reset",
+                            successText = "Reset",
+                            isOutlined = true,
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Reset")
-                        }
+                            onClick = { viewModel.resetTuningConfig() }
+                        )
                     }
                 }
 
                 item {
                     SectionHeader(
-                        title = "Corridor Boundaries",
+                        title = "Walking Corridor Boundaries",
                         description = "Defines the active walking path. Adjusting these narrows or widens the area where hazards trigger alerts."
                     )
                 }
-                item { SettingSlider("Corridor Left", configState.corridorLeft, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeft = it)) } }
-                item { SettingSlider("Corridor Right", configState.corridorRight, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRight = it)) } }
+                item { SettingSlider("Corridor Edge Left", configState.corridorLeft, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeft = it)) } }
+                item { SettingSlider("Corridor Edge Right", configState.corridorRight, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRight = it)) } }
 
                 item {
                     SectionHeader(
-                        title = "Smartphone Distances",
-                        description = "Safety limits for the internal camera. Lower values mean alerts trigger further away (earlier). Higher values trigger closer (later)."
+                        title = "Smartphone Warning Distances",
+                        description = "Thresholds for the internal camera. Triggers as soon as either the bottom edge or the bounding area exceeds the limit. Lower(-) = Earlier. Higher(+) = Later."
                     )
                 }
-                item { SettingSlider("Stop Floor", configState.stopFloorPhone, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorPhone = it)) } }
-                item { SettingSlider("Person Floor", configState.personFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorPhone = it)) } }
-                item { SettingSlider("Object Floor", configState.objectFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorPhone = it)) } }
-                item { SettingSlider("Stairs Floor", configState.stairsFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorPhone = it)) } }
+                item { SettingSlider("Stop Distance", configState.stopFloorPhone, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorPhone = it)) } }
+                item { SettingSlider("Stop Area (Size)", configState.stopAreaPhone, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaPhone = it)) } }
+                item { SettingSlider("Person Warning Distance", configState.personFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorPhone = it)) } }
+                item { SettingSlider("Object Warning Distance", configState.objectFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorPhone = it)) } }
+                item { SettingSlider("Warning Area (Size)", configState.warningAreaPhone, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaPhone = it)) } }
+                item { SettingSlider("Stairs Warning Distance", configState.stairsFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorPhone = it)) } }
 
                 item {
                     SectionHeader(
-                        title = "ESP32 Distances",
-                        description = "Safety limits for the external cane camera. Lower = further away, Higher = closer."
+                        title = "ESP32 Warning Distances",
+                        description = "Thresholds for the external ESP32 Cam. Triggers as soon as either the bottom edge or the bounding area exceeds the limit. Lower(-) = Earlier. Higher(+) = Later."
                     )
                 }
-                item { SettingSlider("Stop Floor", configState.stopFloorEsp, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorEsp = it)) } }
-                item { SettingSlider("Person Floor", configState.personFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorEsp = it)) } }
-                item { SettingSlider("Object Floor", configState.objectFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorEsp = it)) } }
-                item { SettingSlider("Stairs Floor", configState.stairsFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorEsp = it)) } }
+                item { SettingSlider("Stop Distance", configState.stopFloorEsp, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorEsp = it)) } }
+                item { SettingSlider("Stop Area (Size)", configState.stopAreaEsp, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaEsp = it)) } }
+                item { SettingSlider("Person Warning Distance", configState.personFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorEsp = it)) } }
+                item { SettingSlider("Object Warning Distance", configState.objectFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorEsp = it)) } }
+                item { SettingSlider("Warning Area (Size)", configState.warningAreaEsp, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaEsp = it)) } }
+                item { SettingSlider("Stairs Warning Distance", configState.stairsFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorEsp = it)) } }
 
                 item {
                     SectionHeader(
@@ -521,22 +542,106 @@ fun StartScreen(
                         description = "Detection thresholds. Higher values reduce false positives but require the AI to be more certain."
                     )
                 }
-                item { SettingSlider("Object Threshold", configState.confThresholdObjects, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdObjects = it)) } }
-                item { SettingSlider("Surface Threshold", configState.confThresholdSurface, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdSurface = it)) } }
-                item { SettingSlider("NMS Overlap (IoU)", configState.nmsIouThreshold, 0.1f..0.8f) { AppConfig.update(configState.copy(nmsIouThreshold = it)) } }
+                item { SettingSlider("Required Object Confidence", configState.confThresholdObjects, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdObjects = it)) } }
+                item { SettingSlider("Required Surface Confidence", configState.confThresholdSurface, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdSurface = it)) } }
+                item { SettingSlider("Box Overlap Limit", configState.nmsIouThreshold, 0.1f..0.8f) { AppConfig.update(configState.copy(nmsIouThreshold = it)) } }
 
                 item {
                     SectionHeader(
-                        title = "Debouncing & Filter",
-                        description = "Controls alert stability. Higher frame counts make alerts more robust but slightly delay the audio response."
+                        title = "Reliability & Accuracy",
+                        description = "Controls alert stability. Higher frame counts make alerts more reliable but slightly delay the audio response."
                     )
                 }
                 item { SettingSliderInt("Required Hazard Frames", configState.hazardFramesRequired, 1..10) { AppConfig.update(configState.copy(hazardFramesRequired = it)) } }
+                item { SettingSliderInt("Required Surface Frames", configState.surfaceFramesRequired, 1..15) { AppConfig.update(configState.copy(surfaceFramesRequired = it)) } }
                 item { SettingSliderInt("Required Clear Frames", configState.clearFramesRequired, 1..15) { AppConfig.update(configState.copy(clearFramesRequired = it)) } }
 
                 item { Spacer(modifier = Modifier.height(24.dp)) }
             }
         }
+    }
+}
+
+@Composable
+private fun AnimatedSettingsButton(
+    text: String,
+    successText: String,
+    isOutlined: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    var isSuccess by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val targetContainer = if (isSuccess) Color(0xFF22C55E) else if (isOutlined) Color.Transparent else MaterialTheme.colorScheme.primary
+    val targetContent = if (isSuccess) Color.White else if (isOutlined) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimary
+    val targetBorder = if (isSuccess) Color(0xFF22C55E) else MaterialTheme.colorScheme.outline
+
+    val containerColor by animateColorAsState(targetValue = targetContainer, animationSpec = tween(300), label = "container")
+    val contentColor by animateColorAsState(targetValue = targetContent, animationSpec = tween(300), label = "content")
+    val borderColor by animateColorAsState(targetValue = targetBorder, animationSpec = tween(300), label = "border")
+
+    val content: @Composable RowScope.() -> Unit = {
+        AnimatedContent(
+            targetState = isSuccess,
+            transitionSpec = {
+                (fadeIn() + scaleIn()) togetherWith (fadeOut() + scaleOut()) using SizeTransform(clip = false)
+            },
+            label = "button_animation"
+        ) { success ->
+            if (success) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Success",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(text = successText)
+                }
+            } else {
+                Text(text = text)
+            }
+        }
+    }
+
+    if (isOutlined) {
+        OutlinedButton(
+            onClick = {
+                if (!isSuccess) {
+                    onClick()
+                    isSuccess = true
+                    scope.launch {
+                        delay(2.seconds)
+                        isSuccess = false
+                    }
+                }
+            },
+            modifier = modifier,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.outlinedButtonColors(containerColor = containerColor, contentColor = contentColor),
+            border = BorderStroke(1.dp, borderColor),
+            content = content
+        )
+    } else {
+        Button(
+            onClick = {
+                if (!isSuccess) {
+                    onClick()
+                    isSuccess = true
+                    scope.launch {
+                        delay(2.seconds)
+                        isSuccess = false
+                    }
+                }
+            },
+            modifier = modifier,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = containerColor, contentColor = contentColor),
+            content = content
+        )
     }
 }
 

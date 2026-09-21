@@ -51,7 +51,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         viewModel = MainViewModel()
-        viewModel.loadUrl(this) // Lädt gespeicherte URL beim Start
+        viewModel.loadUrl(this)
 
         setContent {
             App_BlindenstockaddonTheme {
@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, AppForegroundService::class.java).apply {
             putExtra("EXTRA_SOURCE_TYPE", sourceType)
             putExtra("EXTRA_STREAM_URL", url)
-            putExtra("EXTRA_ALLOW_ROADWAY", viewModel.uiState.value.isRoadwayAlertsEnabled)
+            putExtra("EXTRA_ALLOW_SURFACE", viewModel.uiState.value.isSurfaceScanEnabled)
         }
         try {
             startForegroundService(intent)

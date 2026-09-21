@@ -55,14 +55,14 @@ fun CameraScreen(viewModel: MainViewModel) {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Roadway Alerts",
+                        text = "Surface Scans",
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(end = 8.dp),
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Switch(
-                        checked = uiState.isRoadwayAlertsEnabled,
-                        onCheckedChange = { viewModel.toggleRoadwayAlerts() }
+                        checked = uiState.isSurfaceScanEnabled,
+                        onCheckedChange = { viewModel.toggleSurfaceScan() }
                     )
                 }
             }
@@ -112,7 +112,6 @@ fun CameraScreen(viewModel: MainViewModel) {
 
                             uiState.detections.forEach { det ->
                                 if (det.className in listOf("sidewalk", "path")) return@forEach
-                                if (!uiState.isRoadwayAlertsEnabled && det.className == "roadway") return@forEach
 
                                 val left = det.boundingBox.x * canvasWidth
                                 val top = det.boundingBox.y * canvasHeight
@@ -164,7 +163,6 @@ fun CameraScreen(viewModel: MainViewModel) {
                     }
 
                 } else {
-                    // Animierte Ladeanzeige während des Kameraverbindungsaufbaus
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)

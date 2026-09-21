@@ -41,6 +41,9 @@ The content is organized as follows:
 
 <directory_structure>
 app/
+  release/
+    app-release.apk
+    output-metadata.json
   src/
     androidTest/
       java/
@@ -146,6 +149,46 @@ settings.gradle.kts
 <files>
 This section contains the contents of the repository's files.
 
+<file path="app/release/output-metadata.json">
+{
+  "version": 3,
+  "artifactType": {
+    "type": "APK",
+    "kind": "Directory"
+  },
+  "applicationId": "com.example.app_blindenstock_add_on",
+  "variantName": "release",
+  "elements": [
+    {
+      "type": "SINGLE",
+      "filters": [],
+      "attributes": [],
+      "versionCode": 1,
+      "versionName": "1.0",
+      "outputFile": "app-release.apk"
+    }
+  ],
+  "elementType": "File",
+  "baselineProfiles": [
+    {
+      "minApi": 28,
+      "maxApi": 30,
+      "baselineProfiles": [
+        "baselineProfiles/1/app-release.dm"
+      ]
+    },
+    {
+      "minApi": 31,
+      "maxApi": 2147483647,
+      "baselineProfiles": [
+        "baselineProfiles/0/app-release.dm"
+      ]
+    }
+  ],
+  "minSdkVersionForDexing": 34
+}
+</file>
+
 <file path="app/src/androidTest/java/com/example/app_blindenstock_add_on/ExampleInstrumentedTest.kt">
 package com.example.app_blindenstock_add_on
 
@@ -169,103 +212,6 @@ class ExampleInstrumentedTest {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("com.example.app_blindenstock_add_on", appContext.packageName)
-    }
-}
-</file>
-
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/LocalCameraSource.kt">
-package com.example.app_blindenstock_add_on.data.video
-
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.Matrix
-import android.util.Log
-import androidx.annotation.OptIn
-import androidx.camera.core.*
-import androidx.camera.core.resolutionselector.ResolutionSelector
-import androidx.camera.core.resolutionselector.ResolutionStrategy
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleOwner
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import java.util.concurrent.Executors
-
-class LocalCameraSource(
-    private val context: Context,
-    private val lifecycleOwner: LifecycleOwner
-) : VideoSource {
-
-    private val cameraExecutor = Executors.newSingleThreadExecutor()
-    private var cameraProvider: ProcessCameraProvider? = null
-
-    @OptIn(ExperimentalGetImage::class)
-    override fun getFrames(): Flow<Bitmap> = callbackFlow {
-        Log.d("LocalCameraSource", "Starting frame flow")
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-
-        cameraProviderFuture.addListener({
-            try {
-                cameraProvider = cameraProviderFuture.get()
-
-                val resolutionSelector = ResolutionSelector.Builder()
-                    .setResolutionStrategy(
-                        ResolutionStrategy(
-                            android.util.Size(320, 240),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
-                        )
-                    )
-                    .build()
-
-                val imageAnalysis = ImageAnalysis.Builder()
-                    .setResolutionSelector(resolutionSelector)
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // Direkt RGBA!
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-
-                imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                    val bitmap = imageProxy.toBitmap()
-                    val rotationDegrees = imageProxy.imageInfo.rotationDegrees
-                    val rotatedBitmap = if (rotationDegrees != 0) {
-                        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-                        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                    } else {
-                        bitmap
-                    }
-
-                    trySend(rotatedBitmap)
-                    imageProxy.close()
-                }
-
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-                cameraProvider?.unbindAll()
-                cameraProvider?.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    imageAnalysis
-                )
-            } catch (e: Exception) {
-                Log.e("LocalCameraSource", "Initialization failed", e)
-                close(e)
-            }
-        }, ContextCompat.getMainExecutor(context))
-
-        awaitClose {
-            stop()
-        }
-    }
-
-    override fun stop() {
-        ContextCompat.getMainExecutor(context).execute {
-            try {
-                cameraProvider?.unbindAll()
-            } catch (e: Exception) {
-                Log.e("LocalCameraSource", "Unbind failed", e)
-            } finally {
-                cameraExecutor.shutdown()
-            }
-        }
     }
 }
 </file>
@@ -751,81 +697,6 @@ class ExampleUnitTest {
 /build
 </file>
 
-<file path="app/build.gradle.kts">
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
-}
-
-android {
-    namespace = "com.example.app_blindenstock_add_on"
-    compileSdk = 35
-
-    defaultConfig {
-        applicationId = "com.example.app_blindenstock_add_on"
-        minSdk = 34
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    buildTypes {
-        release {
-            optimization {
-                enable = false
-            }
-        }
-    }
-    packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-    buildFeatures {
-        compose = true
-    }
-}
-
-dependencies {
-    implementation(libs.androidx.compose.material.icons.extended)
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.graphics.path)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.okhttp)
-    implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.lite.gpu)
-    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
-    // implementation(libs.tensorflow.lite.support)
-    implementation(libs.kotlinx.coroutines.android)
-    
-    // CameraX
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-
-    testImplementation(libs.junit)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(libs.androidx.junit)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
-    debugImplementation(libs.androidx.compose.ui.tooling)
-}
-</file>
-
 <file path="gradle/wrapper/gradle-wrapper.properties">
 #Wed Jul 01 10:42:28 CEST 2026
 distributionBase=GRADLE_USER_HOME
@@ -850,56 +721,6 @@ toolchainUrl.UNIX.X86_64=https\://api.foojay.io/disco/v3.0/ids/4c4f879899012ff0a
 toolchainUrl.WINDOWS.AARCH64=https\://api.foojay.io/disco/v3.0/ids/9482ddec596298c84656d31d16652665/redirect
 toolchainUrl.WINDOWS.X86_64=https\://api.foojay.io/disco/v3.0/ids/39701d92e1756bb2f141eb67cd4c660e/redirect
 toolchainVersion=21
-</file>
-
-<file path="gradle/libs.versions.toml">
-[versions]
-agp = "9.4.1"
-coreKtx = "1.12.0"
-junit = "4.13.2"
-junitVersion = "1.1.5"
-espressoCore = "3.5.1"
-lifecycleRuntimeKtx = "2.6.1"
-activityCompose = "1.8.0"
-kotlin = "2.2.10"
-composeBom = "2026.02.01"
-okhttp = "4.12.0"
-tensorflowLite = "2.16.1"
-tensorflowLiteSupport = "0.4.4"
-kotlinxCoroutines = "1.8.0"
-graphicsPath = "1.1.0"
-camerax = "1.3.4"
-
-[libraries]
-androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
-androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
-androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
-androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
-graphics-path = { group = "androidx.graphics", name = "graphics-path", version.ref = "graphicsPath" }
-androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
-junit = { group = "junit", name = "junit", version.ref = "junit" }
-androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
-androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
-androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
-androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
-androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
-androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
-androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
-androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
-androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
-androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
-androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
-androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
-okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
-tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tensorflowLite" }
-tensorflow-lite-gpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tensorflowLite" }
-tensorflow-lite-support = { group = "org.tensorflow", name = "tensorflow-lite-support", version.ref = "tensorflowLiteSupport" }
-kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
-
-[plugins]
-android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 </file>
 
 <file path="build.gradle.kts">
@@ -1536,6 +1357,103 @@ class UserMotionTracker(context: Context) : SensorEventListener {
 }
 </file>
 
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/data/video/LocalCameraSource.kt">
+package com.example.app_blindenstock_add_on.data.video
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.util.Log
+import androidx.annotation.OptIn
+import androidx.camera.core.*
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import java.util.concurrent.Executors
+
+class LocalCameraSource(
+    private val context: Context,
+    private val lifecycleOwner: LifecycleOwner
+) : VideoSource {
+
+    private val cameraExecutor = Executors.newSingleThreadExecutor()
+    private var cameraProvider: ProcessCameraProvider? = null
+
+    @OptIn(ExperimentalGetImage::class)
+    override fun getFrames(): Flow<Bitmap> = callbackFlow {
+        Log.d("LocalCameraSource", "Starting frame flow")
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+
+        cameraProviderFuture.addListener({
+            try {
+                cameraProvider = cameraProviderFuture.get()
+
+                val resolutionSelector = ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            android.util.Size(320, 240),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                        )
+                    )
+                    .build()
+
+                val imageAnalysis = ImageAnalysis.Builder()
+                    .setResolutionSelector(resolutionSelector)
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // Direkt RGBA!
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+
+                imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                    val bitmap = imageProxy.toBitmap()
+                    val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+                    val rotatedBitmap = if (rotationDegrees != 0) {
+                        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                    } else {
+                        bitmap
+                    }
+
+                    trySend(rotatedBitmap)
+                    imageProxy.close()
+                }
+
+                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                cameraProvider?.unbindAll()
+                cameraProvider?.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    imageAnalysis
+                )
+            } catch (e: Exception) {
+                Log.e("LocalCameraSource", "Initialization failed", e)
+                close(e)
+            }
+        }, ContextCompat.getMainExecutor(context))
+
+        awaitClose {
+            stop()
+        }
+    }
+
+    override fun stop() {
+        ContextCompat.getMainExecutor(context).execute {
+            try {
+                cameraProvider?.unbindAll()
+            } catch (e: Exception) {
+                Log.e("LocalCameraSource", "Unbind failed", e)
+            } finally {
+                cameraExecutor.shutdown()
+            }
+        }
+    }
+}
+</file>
+
 <file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/theme/Color.kt">
 package com.example.app_blindenstock_add_on.framework.ui.theme
 
@@ -1602,263 +1520,136 @@ fun App_BlindenstockaddonTheme(
 }
 </file>
 
-<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/CameraScreen.kt">
-package com.example.app_blindenstock_add_on.framework.ui
-
-import androidx.compose.animation.*
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
-import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
-
-@Composable
-fun CameraScreen(viewModel: MainViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Live View",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "Roadway Alerts",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(end = 8.dp),
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Switch(
-                        checked = uiState.isRoadwayAlertsEnabled,
-                        onCheckedChange = { viewModel.toggleRoadwayAlerts() }
-                    )
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                val frame = uiState.currentFrame
-                if (frame != null) {
-                    val frameAspect = frame.width.toFloat() / frame.height.toFloat()
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .wrapContentSize(Alignment.Center)
-                            .aspectRatio(frameAspect)
-                            .clip(RoundedCornerShape(24.dp))
-                    ) {
-                        Image(
-                            bitmap = frame.asImageBitmap(),
-                            contentDescription = "Live Video",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.FillBounds
-                        )
-
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            val canvasWidth = size.width
-                            val canvasHeight = size.height
-
-                            drawLine(
-                                color = Color.White.copy(alpha = 0.2f),
-                                start = Offset(canvasWidth * 0.32f, 0f),
-                                end = Offset(canvasWidth * 0.32f, canvasHeight),
-                                strokeWidth = 3f
-                            )
-                            drawLine(
-                                color = Color.White.copy(alpha = 0.2f),
-                                start = Offset(canvasWidth * 0.68f, 0f),
-                                end = Offset(canvasWidth * 0.68f, canvasHeight),
-                                strokeWidth = 3f
-                            )
-
-                            uiState.detections.forEach { det ->
-                                if (det.className in listOf("sidewalk", "path")) return@forEach
-                                if (!uiState.isRoadwayAlertsEnabled && det.className == "roadway") return@forEach
-
-                                val left = det.boundingBox.x * canvasWidth
-                                val top = det.boundingBox.y * canvasHeight
-                                val width = det.boundingBox.width * canvasWidth
-                                val height = det.boundingBox.height * canvasHeight
-
-                                val boxColor = when (det.priority) {
-                                    "CRITICAL" -> Color(0xFFEF4444)
-                                    "HIGH" -> Color(0xFFF97316)
-                                    "MEDIUM" -> Color(0xFFEAB308)
-                                    else -> Color(0xFF22C55E)
-                                }
-
-                                drawRect(
-                                    color = boxColor,
-                                    topLeft = Offset(left, top),
-                                    size = Size(width, height),
-                                    style = Stroke(width = 5f)
-                                )
-
-                                val tag = det.className.replaceFirstChar { it.uppercase() }
-                                drawContext.canvas.nativeCanvas.apply {
-                                    val paint = android.graphics.Paint().apply {
-                                        color = android.graphics.Color.WHITE
-                                        textSize = 36f
-                                        isFakeBoldText = true
-                                        typeface = android.graphics.Typeface.SANS_SERIF
-                                        setShadowLayer(8f, 0f, 0f, android.graphics.Color.BLACK)
-                                    }
-                                    drawText(tag, left + 12f, (top - 16f).coerceAtLeast(45f), paint)
-                                }
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(16.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color.Black.copy(alpha = 0.5f))
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .animateContentSize(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text("${uiState.currentFps} FPS", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                        Text("${uiState.inferenceTime} ms", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                        Text(if (uiState.isUserWalking) "Walking" else "Standing", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                    }
-
-                } else {
-                    // Animierte Ladeanzeige während des Kameraverbindungsaufbaus
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(36.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            strokeWidth = 3.dp
-                        )
-                        Text(
-                            text = "Connecting camera...",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Color.White.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-            }
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .animateContentSize(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Current Audio Guidance",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AnimatedContent(
-                            targetState = uiState.currentGuidancePhrase,
-                            transitionSpec = {
-                                fadeIn() togetherWith fadeOut() using SizeTransform(clip = false)
-                            },
-                            label = "phrase_morph"
-                        ) { targetPhrase ->
-                            Text(
-                                text = targetPhrase,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (targetPhrase.startsWith("Stop"))
-                                    MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                        }
-
-                        Text(
-                            text = "${uiState.detections.size} Objects",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-            }
-
-            Button(
-                onClick = {
-                    viewModel.stopStream()
-                    viewModel.navigateTo(AppScreen.START)
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text(
-                    text = "Stop",
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
-        }
-    }
-}
-</file>
-
 <file path="app/src/main/res/values/strings.xml">
 <resources>
     <string name="app_name">Smart-Blind-Cane</string>
     <string name="fgs_special_use_justification">The app needs to run a foreground service to provide assistance to blind people even when the app is in the background.</string>
 </resources>
+</file>
+
+<file path="app/build.gradle.kts">
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
+
+android {
+    namespace = "com.example.app_blindenstock_add_on"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.example.app_blindenstock_add_on"
+        minSdk = 34
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            optimization {
+                enable = false
+            }
+        }
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    buildFeatures {
+        compose = true
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.graphics.path)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.okhttp)
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.gpu)
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
+    // implementation(libs.tensorflow.lite.support)
+    implementation(libs.kotlinx.coroutines.android)
+    
+    // CameraX
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.junit)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+}
+</file>
+
+<file path="gradle/libs.versions.toml">
+[versions]
+agp = "9.4.1"
+coreKtx = "1.12.0"
+junit = "4.13.2"
+junitVersion = "1.1.5"
+espressoCore = "3.5.1"
+lifecycleRuntimeKtx = "2.6.1"
+activityCompose = "1.8.0"
+kotlin = "2.2.10"
+composeBom = "2026.02.01"
+okhttp = "4.12.0"
+tensorflowLite = "2.16.1"
+tensorflowLiteSupport = "0.4.4"
+kotlinxCoroutines = "1.8.0"
+graphicsPath = "1.1.0"
+camerax = "1.3.4"
+
+[libraries]
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+graphics-path = { group = "androidx.graphics", name = "graphics-path", version.ref = "graphicsPath" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tensorflowLite" }
+tensorflow-lite-gpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tensorflowLite" }
+tensorflow-lite-support = { group = "org.tensorflow", name = "tensorflow-lite-support", version.ref = "tensorflowLiteSupport" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 </file>
 
 <file path=".gitignore">
@@ -2108,7 +1899,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         viewModel = MainViewModel()
-        viewModel.loadUrl(this) // Lädt gespeicherte URL beim Start
+        viewModel.loadUrl(this)
 
         setContent {
             App_BlindenstockaddonTheme {
@@ -2152,7 +1943,7 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, AppForegroundService::class.java).apply {
             putExtra("EXTRA_SOURCE_TYPE", sourceType)
             putExtra("EXTRA_STREAM_URL", url)
-            putExtra("EXTRA_ALLOW_ROADWAY", viewModel.uiState.value.isRoadwayAlertsEnabled)
+            putExtra("EXTRA_ALLOW_SURFACE", viewModel.uiState.value.isSurfaceScanEnabled)
         }
         try {
             startForegroundService(intent)
@@ -2166,6 +1957,256 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, AppForegroundService::class.java)
         stopService(intent)
         viewModel.setBackgroundRunning(running = false)
+    }
+}
+</file>
+
+<file path="app/src/main/java/com/example/app_blindenstock_add_on/framework/ui/CameraScreen.kt">
+package com.example.app_blindenstock_add_on.framework.ui
+
+import androidx.compose.animation.*
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
+import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
+
+@Composable
+fun CameraScreen(viewModel: MainViewModel) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Live View",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Surface Scans",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(end = 8.dp),
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Switch(
+                        checked = uiState.isSurfaceScanEnabled,
+                        onCheckedChange = { viewModel.toggleSurfaceScan() }
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                val frame = uiState.currentFrame
+                if (frame != null) {
+                    val frameAspect = frame.width.toFloat() / frame.height.toFloat()
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .wrapContentSize(Alignment.Center)
+                            .aspectRatio(frameAspect)
+                            .clip(RoundedCornerShape(24.dp))
+                    ) {
+                        Image(
+                            bitmap = frame.asImageBitmap(),
+                            contentDescription = "Live Video",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.FillBounds
+                        )
+
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val canvasWidth = size.width
+                            val canvasHeight = size.height
+
+                            drawLine(
+                                color = Color.White.copy(alpha = 0.2f),
+                                start = Offset(canvasWidth * 0.32f, 0f),
+                                end = Offset(canvasWidth * 0.32f, canvasHeight),
+                                strokeWidth = 3f
+                            )
+                            drawLine(
+                                color = Color.White.copy(alpha = 0.2f),
+                                start = Offset(canvasWidth * 0.68f, 0f),
+                                end = Offset(canvasWidth * 0.68f, canvasHeight),
+                                strokeWidth = 3f
+                            )
+
+                            uiState.detections.forEach { det ->
+                                if (det.className in listOf("sidewalk", "path")) return@forEach
+
+                                val left = det.boundingBox.x * canvasWidth
+                                val top = det.boundingBox.y * canvasHeight
+                                val width = det.boundingBox.width * canvasWidth
+                                val height = det.boundingBox.height * canvasHeight
+
+                                val boxColor = when (det.priority) {
+                                    "CRITICAL" -> Color(0xFFEF4444)
+                                    "HIGH" -> Color(0xFFF97316)
+                                    "MEDIUM" -> Color(0xFFEAB308)
+                                    else -> Color(0xFF22C55E)
+                                }
+
+                                drawRect(
+                                    color = boxColor,
+                                    topLeft = Offset(left, top),
+                                    size = Size(width, height),
+                                    style = Stroke(width = 5f)
+                                )
+
+                                val tag = det.className.replaceFirstChar { it.uppercase() }
+                                drawContext.canvas.nativeCanvas.apply {
+                                    val paint = android.graphics.Paint().apply {
+                                        color = android.graphics.Color.WHITE
+                                        textSize = 36f
+                                        isFakeBoldText = true
+                                        typeface = android.graphics.Typeface.SANS_SERIF
+                                        setShadowLayer(8f, 0f, 0f, android.graphics.Color.BLACK)
+                                    }
+                                    drawText(tag, left + 12f, (top - 16f).coerceAtLeast(45f), paint)
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(16.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.Black.copy(alpha = 0.5f))
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .animateContentSize(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text("${uiState.currentFps} FPS", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text("${uiState.inferenceTime} ms", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text(if (uiState.isUserWalking) "Walking" else "Standing", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    }
+
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
+                        )
+                        Text(
+                            text = "Connecting camera...",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .animateContentSize(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Current Audio Guidance",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AnimatedContent(
+                            targetState = uiState.currentGuidancePhrase,
+                            transitionSpec = {
+                                fadeIn() togetherWith fadeOut() using SizeTransform(clip = false)
+                            },
+                            label = "phrase_morph"
+                        ) { targetPhrase ->
+                            Text(
+                                text = targetPhrase,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = if (targetPhrase.startsWith("Stop"))
+                                    MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+
+                        Text(
+                            text = "${uiState.detections.size} Objects",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
+
+            Button(
+                onClick = {
+                    viewModel.stopStream()
+                    viewModel.navigateTo(AppScreen.START)
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text(
+                    text = "Stop",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+        }
     }
 }
 </file>
@@ -2358,7 +2399,6 @@ class YoloDetector(private val context: Context) {
     private var objectGpuDelegate: GpuDelegate? = null
     private var surfaceGpuDelegate: GpuDelegate? = null
 
-    // Coroutine Mutex ersetzt @Synchronized
     private val mutex = Mutex()
 
     private val scaledBitmap = Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888)
@@ -2366,7 +2406,6 @@ class YoloDetector(private val context: Context) {
     private val scaleMatrix = Matrix()
     private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    // Zwei separate Input-Buffer für die parallele Ausführung
     private val inputBufferObjects: ByteBuffer = ByteBuffer.allocateDirect(1 * 3 * 320 * 320 * 4).apply {
         order(ByteOrder.nativeOrder())
     }
@@ -2375,7 +2414,6 @@ class YoloDetector(private val context: Context) {
     }
 
     private val pixelArray = IntArray(320 * 320)
-    // Schnelles JVM-Array für das Preprocessing (Bulk-Transfer)
     private val floatArray = FloatArray(3 * 320 * 320)
 
     private val outputObjects = Array(1) { Array(84) { FloatArray(2100) } }
@@ -2473,7 +2511,12 @@ class YoloDetector(private val context: Context) {
         return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    suspend fun detect(bitmap: Bitmap, isUserWalking: Boolean = true, config: AppConfigState): FrameAnalysisResult = mutex.withLock {
+    suspend fun detect(
+        bitmap: Bitmap,
+        isUserWalking: Boolean = true,
+        config: AppConfigState,
+        runSurfaceModel: Boolean = true
+    ): FrameAnalysisResult = mutex.withLock {
         coroutineScope {
             if (objectInterpreter == null && surfaceInterpreter == null) {
                 return@coroutineScope FrameAnalysisResult(emptyList(), CorridorAnalysis(), "unknown", 0f)
@@ -2492,17 +2535,17 @@ class YoloDetector(private val context: Context) {
             scaleCanvas.drawColor(android.graphics.Color.BLACK)
             scaleCanvas.drawBitmap(bitmap, scaleMatrix, scalePaint)
 
-            // Beide Buffer mit dem optimierten Array füllen
             preprocessNCHW(scaledBitmap, inputBufferObjects)
-            inputBufferSurface.rewind()
-            inputBufferSurface.asFloatBuffer().put(floatArray)
+            if (runSurfaceModel) {
+                inputBufferSurface.rewind()
+                inputBufferSurface.asFloatBuffer().put(floatArray)
+            }
 
             val padX = dx / 320f
             val padY = dy / 320f
             val activeW = (bitmap.width * scale) / 320f
             val activeH = (bitmap.height * scale) / 320f
 
-            // Asynchroner Task 1: Objekterkennung
             val deferredObjects = async(Dispatchers.Default) {
                 val rawObjects = mutableListOf<Detection>()
                 objectInterpreter?.let { interp ->
@@ -2513,26 +2556,28 @@ class YoloDetector(private val context: Context) {
                 applyNMS(rawObjects, config.nmsIouThreshold)
             }
 
-            // Asynchroner Task 2: Oberflächenerkennung (läuft nur jeden 2. Frame)
             val deferredSurfaces = async(Dispatchers.Default) {
-                if (frameSequence % 2L == 0L || cachedSurfaces.isEmpty()) {
-                    val rawSurfaces = mutableListOf<Detection>()
-                    surfaceInterpreter?.let { interp ->
-                        inputBufferSurface.rewind()
-                        if (surfaceHasDualOutputs) {
-                            val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
-                            interp.runForMultipleInputsOutputs(arrayOf(inputBufferSurface), outputs)
-                        } else {
-                            interp.run(inputBufferSurface, outputSurface0)
-                        }
-                        rawSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
-                    }
-                    cachedSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
+                if (!runSurfaceModel) {
+                    cachedSurfaces = emptyList()
+                    return@async emptyList<Detection>()
                 }
+
+                val rawSurfaces = mutableListOf<Detection>()
+                surfaceInterpreter?.let { interp ->
+                    inputBufferSurface.rewind()
+                    if (surfaceHasDualOutputs) {
+                        val outputs = mutableMapOf<Int, Any>(0 to outputSurface0, 1 to outputSurface1)
+                        interp.runForMultipleInputsOutputs(arrayOf(inputBufferSurface), outputs)
+                    } else {
+                        interp.run(inputBufferSurface, outputSurface0)
+                    }
+                    rawSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
+                }
+                cachedSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
+
                 cachedSurfaces
             }
 
-            // Auf beide parallele Tasks warten
             val filteredObjects = deferredObjects.await()
             val filteredSurfaces = deferredSurfaces.await()
 
@@ -2558,7 +2603,6 @@ class YoloDetector(private val context: Context) {
         bitmap.getPixels(pixelArray, 0, 320, 0, 0, 320, 320)
         val totalPixels = 320 * 320
 
-        // JVM-internes Array befüllen (keine extrem langsamen JNI-Calls pro Pixel mehr)
         for (i in 0 until totalPixels) {
             val pixel = pixelArray[i]
             floatArray[i] = ((pixel shr 16) and 0xFF) * 0.003921569f
@@ -2566,7 +2610,6 @@ class YoloDetector(private val context: Context) {
             floatArray[2 * totalPixels + i] = (pixel and 0xFF) * 0.003921569f
         }
 
-        // Ein einziger Bulk-Transfer in den nativen C++ Speicher
         targetBuffer.rewind()
         targetBuffer.asFloatBuffer().put(floatArray)
     }
@@ -2722,8 +2765,8 @@ class YoloDetector(private val context: Context) {
                 }
 
                 val priority = when {
-                    floorY > 0.80f || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
-                    trend == "growing" || floorY > 0.60f -> "HIGH"
+                    floorY > 0.80f || area >= config.stopAreaPhone || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
+                    trend == "growing" || floorY > 0.60f || area >= config.warningAreaPhone -> "HIGH"
                     floorY > 0.40f -> "MEDIUM"
                     else -> "LOW"
                 }
@@ -2757,6 +2800,7 @@ class YoloDetector(private val context: Context) {
                 val b = rawDet.boundingBox
                 val cx = b.x + b.width / 2f
                 val floorY = b.y + b.height
+                val area = b.width * b.height
 
                 val clockPos = when {
                     cx < 0.35f -> "10_o_clock"
@@ -2767,8 +2811,8 @@ class YoloDetector(private val context: Context) {
                 }
 
                 val priority = when {
-                    floorY > 0.80f -> "CRITICAL"
-                    floorY > 0.60f -> "HIGH"
+                    floorY > 0.80f || area >= config.stopAreaPhone -> "CRITICAL"
+                    floorY > 0.60f || area >= config.warningAreaPhone -> "HIGH"
                     else -> "LOW"
                 }
 
@@ -2872,6 +2916,7 @@ object GuidanceSynthesizer {
     private var lastEvadeLockTime: Long = 0L
     private var clearFrameCounter = 0
     private var hazardFrameCounter = 0
+    private var surfaceFrameCounter = 0
 
     // Status für Stop-Situation
     private var isStopActive = false
@@ -2880,7 +2925,7 @@ object GuidanceSynthesizer {
     fun synthesize(
         result: FrameAnalysisResult,
         isUserWalking: Boolean,
-        allowRoadwayAlerts: Boolean = false,
+        allowSurfaceScans: Boolean = false,
         isEsp32: Boolean = false,
         config: AppConfigState
     ): GuidanceOutput {
@@ -2893,9 +2938,11 @@ object GuidanceSynthesizer {
         val objectFloorMin = if (isEsp32) config.objectFloorEsp else config.objectFloorPhone
         val stairsFloorMin = if (isEsp32) config.stairsFloorEsp else config.stairsFloorPhone
 
+        val stopAreaThreshold = if (isEsp32) config.stopAreaEsp else config.stopAreaPhone
+        val warningAreaThreshold = if (isEsp32) config.warningAreaEsp else config.warningAreaPhone
+
         val imminentThreat = detections.firstOrNull { det ->
-            if (det.className in listOf("sidewalk", "path")) return@firstOrNull false
-            if (!allowRoadwayAlerts && det.className == "roadway") return@firstOrNull false
+            if (det.className in listOf("sidewalk", "path", "roadway", "stairs")) return@firstOrNull false
 
             val boxLeft = det.boundingBox.x
             val boxRight = det.boundingBox.x + det.boundingBox.width
@@ -2904,7 +2951,7 @@ object GuidanceSynthesizer {
 
             val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
 
-            val isDistanceCritical = floorY > stopFloorThreshold
+            val isDistanceCritical = floorY > stopFloorThreshold || area >= stopAreaThreshold
             val isTorsoImminent = (det.className == "person") && (area > 0.15f || det.boundingBox.width > 0.28f) && (floorY > 0.55f)
             val isTtcCritical = det.ttcSec in 0.2f..1.3f && det.trend == "growing"
 
@@ -2913,41 +2960,49 @@ object GuidanceSynthesizer {
 
         if (imminentThreat != null) {
             hazardFrameCounter++
+            surfaceFrameCounter = 0 // Reset
             clearFrameCounter = 0
             if (hazardFrameCounter >= config.hazardFramesRequired) {
+                val tLeft = imminentThreat.boundingBox.x
+                val tRight = imminentThreat.boundingBox.x + imminentThreat.boundingBox.width
+                val tCx = tLeft + imminentThreat.boundingBox.width / 2f
+
+                val threatBlocksLeft = tLeft < 0.25f
+                val threatBlocksRight = tRight > 0.75f
+                val flankThreshold = 0.60f
+
+                val hasObstacleLeft = threatBlocksLeft || detections.any {
+                    it != imminentThreat &&
+                            it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+                val hasObstacleRight = threatBlocksRight || detections.any {
+                    it != imminentThreat &&
+                            it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+
+                val currentBestDirection = when {
+                    !hasObstacleLeft && !hasObstacleRight -> if (tCx >= 0.50f) "Turn left" else "Turn right"
+                    !hasObstacleLeft -> "Turn left"
+                    !hasObstacleRight -> "Turn right"
+                    else -> "Path blocked"
+                }
+
                 if (!isStopActive) {
                     isStopActive = true
-
-                    val tLeft = imminentThreat.boundingBox.x
-                    val tRight = imminentThreat.boundingBox.x + imminentThreat.boundingBox.width
-                    val tCx = tLeft + imminentThreat.boundingBox.width / 2f
-
-                    val threatBlocksLeft = tLeft < 0.25f
-                    val threatBlocksRight = tRight > 0.75f
-
-                    val flankThreshold = 0.60f
-
-                    val hasObstacleLeft = threatBlocksLeft || detections.any {
-                        it != imminentThreat &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-                    val hasObstacleRight = threatBlocksRight || detections.any {
-                        it != imminentThreat &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-
-                    stopEvadeDirection = when {
-                        !hasObstacleLeft && !hasObstacleRight -> if (tCx >= 0.50f) "Turn left" else "Turn right"
-                        !hasObstacleLeft -> "Turn left"
-                        !hasObstacleRight -> "Turn right"
-                        else -> "Path blocked"
-                    }
+                    stopEvadeDirection = currentBestDirection
                     return GuidanceOutput("Stop!", isEmergency = true, priorityLevel = 3)
                 } else {
+                    if (stopEvadeDirection == "Path blocked" ||
+                        (stopEvadeDirection == "Turn left" && hasObstacleLeft) ||
+                        (stopEvadeDirection == "Turn right" && hasObstacleRight)
+                    ) {
+                        stopEvadeDirection = currentBestDirection
+                    }
+
                     val phrase = if (stopEvadeDirection == "Path blocked") "Path blocked." else "$stopEvadeDirection."
                     return GuidanceOutput(phrase, isEmergency = true, priorityLevel = 3)
                 }
@@ -2957,90 +3012,67 @@ object GuidanceSynthesizer {
             isStopActive = false
         }
 
-        val stairsHazard = detections.firstOrNull { det ->
-            val boxLeft = det.boundingBox.x
-            val boxRight = det.boundingBox.x + det.boundingBox.width
-            val floorY = det.boundingBox.y + det.boundingBox.height
-            det.className == "stairs" && (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY > stairsFloorMin
-        }
-
-        if (stairsHazard != null && isUserWalking) {
-            hazardFrameCounter++
-            clearFrameCounter = 0
-            if (hazardFrameCounter >= config.hazardFramesRequired) {
-                return GuidanceOutput("Caution, stairs ahead.", isEmergency = false, priorityLevel = 2)
-            }
-            return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
-        }
-
-        if (allowRoadwayAlerts) {
-            val isRoadwayReliable = !hasStairsVisible &&
-                    result.primarySurface == "roadway" &&
-                    result.surfaceConfidence > 0.75f &&
-                    detections.none { it.className == "sidewalk" && it.score > 0.45f }
-
-            val roadwayGroundCheck = detections.firstOrNull { det ->
-                val floorY = det.boundingBox.y + det.boundingBox.height
-                val roadwayMin = if (isEsp32) 0.86f else 0.84f
-                det.className == "roadway" && det.boundingBox.y > 0.25f && floorY > roadwayMin
-            }
-
-            if ((isRoadwayReliable || roadwayGroundCheck != null) && isUserWalking) {
-                hazardFrameCounter++
-                clearFrameCounter = 0
-                if (hazardFrameCounter >= config.hazardFramesRequired) {
-                    return GuidanceOutput("Warning, roadway surface.", isEmergency = false, priorityLevel = 2)
-                }
-                return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
-            }
-        }
-
         val corridorPerson = detections.firstOrNull { det ->
             if (det.className != "person") return@firstOrNull false
             val boxLeft = det.boundingBox.x
             val boxRight = det.boundingBox.x + det.boundingBox.width
             val floorY = det.boundingBox.y + det.boundingBox.height
+            val area = det.boundingBox.width * det.boundingBox.height
 
             val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
-            inCorridor && (floorY in personFloorMin..stopFloorThreshold)
+            val inDistance = (floorY in personFloorMin..stopFloorThreshold) || (area in warningAreaThreshold..stopAreaThreshold)
+
+            inCorridor && inDistance
         }
 
         if (corridorPerson != null) {
             hazardFrameCounter++
+            surfaceFrameCounter = 0 // Reset
             clearFrameCounter = 0
 
             if (hazardFrameCounter >= config.hazardFramesRequired) {
-                val isLockExpired = (now - lastEvadeLockTime) > config.evadeLockMs
+                val pLeft = corridorPerson.boundingBox.x
+                val pRight = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width
+                val pCx = pLeft + corridorPerson.boundingBox.width / 2f
+
+                val personBlocksLeft = pLeft < 0.25f
+                val personBlocksRight = pRight > 0.75f
+                val flankThreshold = 0.62f
+
+                val hasObstacleLeft = personBlocksLeft || detections.any {
+                    it != corridorPerson &&
+                            it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+                val hasObstacleRight = personBlocksRight || detections.any {
+                    it != corridorPerson &&
+                            it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                            (it.boundingBox.y + it.boundingBox.height) > flankThreshold
+                }
+
+                val currentSide = when {
+                    !hasObstacleLeft && !hasObstacleRight -> if (pCx >= 0.50f) "step left" else "step right"
+                    !hasObstacleLeft -> "step left"
+                    !hasObstacleRight -> "step right"
+                    else -> "path blocked"
+                }
+
+                val isLockExpired = (now - lastEvadeLockTime) > config.evadeLockMs ||
+                        (lockedEvadeSide == "path blocked" && currentSide != "path blocked")
+
                 if (isLockExpired) {
-                    val pLeft = corridorPerson.boundingBox.x
-                    val pRight = corridorPerson.boundingBox.x + corridorPerson.boundingBox.width
-                    val pCx = pLeft + corridorPerson.boundingBox.width / 2f
-
-                    val personBlocksLeft = pLeft < 0.25f
-                    val personBlocksRight = pRight > 0.75f
-                    val flankThreshold = 0.62f
-
-                    val hasObstacleLeft = personBlocksLeft || detections.any {
-                        it != corridorPerson &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-                    val hasObstacleRight = personBlocksRight || detections.any {
-                        it != corridorPerson &&
-                                (allowRoadwayAlerts || it.className != "roadway") &&
-                                (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
-                                (it.boundingBox.y + it.boundingBox.height) > flankThreshold
-                    }
-
-                    lockedEvadeSide = when {
-                        !hasObstacleLeft && !hasObstacleRight -> if (pCx >= 0.50f) "step left" else "step right"
-                        !hasObstacleLeft -> "step left"
-                        !hasObstacleRight -> "step right"
-                        else -> "path blocked"
-                    }
+                    lockedEvadeSide = currentSide
+                    lastEvadeLockTime = now
+                } else if (
+                    (lockedEvadeSide == "step left" && hasObstacleLeft) ||
+                    (lockedEvadeSide == "step right" && hasObstacleRight)
+                ) {
+                    lockedEvadeSide = currentSide
                     lastEvadeLockTime = now
                 }
+
                 val phrase = if (lockedEvadeSide == "path blocked") "Person ahead, path blocked." else "Person ahead, $lockedEvadeSide."
                 return GuidanceOutput(phrase, isEmergency = false, priorityLevel = 2)
             }
@@ -3057,13 +3089,14 @@ object GuidanceSynthesizer {
             val area = det.boundingBox.width * det.boundingBox.height
 
             val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
-            val inDistance = floorY in objectFloorMin..stopFloorThreshold || area > 0.10f
+            val inDistance = (floorY in objectFloorMin..stopFloorThreshold) || (area in warningAreaThreshold..stopAreaThreshold)
 
             inCorridor && inDistance
         }
 
         if (vehicleHazard != null && isUserWalking) {
             hazardFrameCounter++
+            surfaceFrameCounter = 0 // Reset
             clearFrameCounter = 0
             if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val vehicleName = formatSpecificObjectName(vehicleHazard.className)
@@ -3076,15 +3109,16 @@ object GuidanceSynthesizer {
             val boxLeft = det.boundingBox.x
             val boxRight = det.boundingBox.x + det.boundingBox.width
             val floorY = det.boundingBox.y + det.boundingBox.height
-            val isRoadwayIgnored = !allowRoadwayAlerts && det.className == "roadway"
+            val area = det.boundingBox.width * det.boundingBox.height
 
-            !isRoadwayIgnored &&
-                    det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck") &&
-                    (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY in objectFloorMin..stopFloorThreshold
+            det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck") &&
+                    (boxLeft < config.corridorRight && boxRight > config.corridorLeft) &&
+                    ((floorY in objectFloorMin..stopFloorThreshold) || (area in warningAreaThreshold..stopAreaThreshold))
         }
 
         if (staticObstacle != null && isUserWalking) {
             hazardFrameCounter++
+            surfaceFrameCounter = 0 // Reset
             clearFrameCounter = 0
             if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val obstacleName = formatSpecificObjectName(staticObstacle.className)
@@ -3093,10 +3127,54 @@ object GuidanceSynthesizer {
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }
 
+        // --- AB HIER: SURFACE LOGIK (Nutzt den eigenen surfaceFrameCounter) ---
+
+        val stairsHazard = detections.firstOrNull { det ->
+            val boxLeft = det.boundingBox.x
+            val boxRight = det.boundingBox.x + det.boundingBox.width
+            val floorY = det.boundingBox.y + det.boundingBox.height
+            det.className == "stairs" && (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY > stairsFloorMin
+        }
+
+        if (stairsHazard != null && isUserWalking) {
+            surfaceFrameCounter++
+            hazardFrameCounter = 0 // Reset
+            clearFrameCounter = 0
+            if (surfaceFrameCounter >= config.surfaceFramesRequired) {
+                return GuidanceOutput("Caution, stairs ahead.", isEmergency = false, priorityLevel = 2)
+            }
+            return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
+        }
+
+        if (allowSurfaceScans) {
+            val isRoadwayReliable = !hasStairsVisible &&
+                    result.primarySurface == "roadway" &&
+                    result.surfaceConfidence > 0.75f &&
+                    detections.none { it.className == "sidewalk" && it.score > 0.45f }
+
+            val roadwayGroundCheck = detections.firstOrNull { det ->
+                val floorY = det.boundingBox.y + det.boundingBox.height
+                val roadwayMin = if (isEsp32) 0.86f else 0.84f
+                det.className == "roadway" && det.boundingBox.y > 0.25f && floorY > roadwayMin
+            }
+
+            if ((isRoadwayReliable || roadwayGroundCheck != null) && isUserWalking) {
+                surfaceFrameCounter++
+                hazardFrameCounter = 0 // Reset
+                clearFrameCounter = 0
+                if (surfaceFrameCounter >= config.surfaceFramesRequired) {
+                    return GuidanceOutput("Warning, roadway surface.", isEmergency = false, priorityLevel = 2)
+                }
+                return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
+            }
+        }
+
+        // Falls wir hier ankommen, gab es keine Gefahren
         hazardFrameCounter = 0
+        surfaceFrameCounter = 0
 
         val hasCloseProximityHazard = detections.any {
-            it.className !in listOf("sidewalk", "path") &&
+            it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
                     (it.boundingBox.width * it.boundingBox.height > 0.12f) &&
                     (it.boundingBox.y + it.boundingBox.height > 0.60f)
         }
@@ -3209,7 +3287,7 @@ class AppForegroundService : Service(), LifecycleOwner {
         private const val NOTIFICATION_ID = 1
 
         @Volatile
-        var allowRoadwayAlerts: Boolean = false
+        var allowSurfaceScans: Boolean = false
 
         private val _metrics = MutableStateFlow(ServiceMetrics())
         val metrics: StateFlow<ServiceMetrics> = _metrics.asStateFlow()
@@ -3236,8 +3314,8 @@ class AppForegroundService : Service(), LifecycleOwner {
 
         val sourceType = intent?.getStringExtra("EXTRA_SOURCE_TYPE") ?: "MJPEG"
         val url = intent?.getStringExtra("EXTRA_STREAM_URL") ?: "http://192.168.4.1/stream"
-        if (intent?.hasExtra("EXTRA_ALLOW_ROADWAY") == true) {
-            allowRoadwayAlerts = intent.getBooleanExtra("EXTRA_ALLOW_ROADWAY", false)
+        if (intent?.hasExtra("EXTRA_ALLOW_SURFACE") == true) {
+            allowSurfaceScans = intent.getBooleanExtra("EXTRA_ALLOW_SURFACE", false)
         }
 
         val isEspMode = (sourceType != "CAMERA")
@@ -3283,12 +3361,12 @@ class AppForegroundService : Service(), LifecycleOwner {
                         val isWalking = motionTracker?.isUserWalking ?: false
                         val currentConfig = AppConfig.currentState.value
 
-                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
+                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig, allowSurfaceScans) ?: return@collect
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = analysisResult,
                             isUserWalking = isWalking,
-                            allowRoadwayAlerts = allowRoadwayAlerts,
+                            allowSurfaceScans = allowSurfaceScans,
                             isEsp32 = isEspMode,
                             config = currentConfig
                         )
@@ -3324,8 +3402,6 @@ class AppForegroundService : Service(), LifecycleOwner {
         speechManager?.shutdown()
         speechManager = null
 
-        // Den Detector in einer lokalen Variable zwischenspeichern und den
-        // suspend-Aufruf in einem separaten Thread feuern
         val det = detector
         detector = null
         CoroutineScope(Dispatchers.IO).launch {
@@ -3400,7 +3476,7 @@ data class MainUiState(
     val corridor: CorridorAnalysis = CorridorAnalysis(),
     val primarySurface: String = "unknown",
     val currentGuidancePhrase: String = "Clear",
-    val isRoadwayAlertsEnabled: Boolean = false,
+    val isSurfaceScanEnabled: Boolean = false,
     val detectionLogs: List<String> = emptyList(),
     val errorMessage: String? = null,
     val streamUrl: String = "",
@@ -3420,7 +3496,7 @@ class MainViewModel : ViewModel() {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var streamJob: Job? = null
-    private var cleanupJob: Job? = null // Synchronisiert den Abbau der Ressourcen
+    private var cleanupJob: Job? = null
 
     private var videoSource: VideoSource? = null
     private var detector: YoloDetector? = null
@@ -3456,10 +3532,10 @@ class MainViewModel : ViewModel() {
     fun updateSourceType(type: SourceType) { _uiState.value = _uiState.value.copy(sourceType = type) }
     fun setBackgroundRunning(running: Boolean) { _uiState.value = _uiState.value.copy(isBackgroundRunning = running) }
 
-    fun toggleRoadwayAlerts() {
-        val next = !_uiState.value.isRoadwayAlertsEnabled
-        _uiState.value = _uiState.value.copy(isRoadwayAlertsEnabled = next)
-        AppForegroundService.allowRoadwayAlerts = next
+    fun toggleSurfaceScan() {
+        val next = !_uiState.value.isSurfaceScanEnabled
+        _uiState.value = _uiState.value.copy(isSurfaceScanEnabled = next)
+        AppForegroundService.allowSurfaceScans = next
     }
 
     fun loadUrl(context: Context) {
@@ -3491,7 +3567,6 @@ class MainViewModel : ViewModel() {
     }
 
     fun startStream(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        // Verhindert doppelte Starts während das Modell noch lädt
         if (_uiState.value.isStreaming || _uiState.value.isLoading) return
 
         val urlToUse = _uiState.value.streamUrl
@@ -3514,7 +3589,6 @@ class MainViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(isStreaming = true, isLoading = true)
 
         streamJob = viewModelScope.launch(Dispatchers.Default) {
-            // WICHTIG: Warte bis alte Streams/Modelle restlos aus dem RAM gelöscht sind
             cleanupJob?.join()
 
             detector = YoloDetector(context)
@@ -3548,14 +3622,15 @@ class MainViewModel : ViewModel() {
 
                         val isWalking = motionTracker?.isUserWalking ?: false
                         val currentConfig = AppConfig.currentState.value
+                        val runSurface = _uiState.value.isSurfaceScanEnabled
 
-                        val result = detector?.detect(bitmap, isWalking, currentConfig) ?: return@collect
+                        val result = detector?.detect(bitmap, isWalking, currentConfig, runSurface) ?: return@collect
                         val infTime = detector?.lastInferenceTime ?: 0L
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = result,
                             isUserWalking = isWalking,
-                            allowRoadwayAlerts = _uiState.value.isRoadwayAlertsEnabled,
+                            allowSurfaceScans = runSurface,
                             isEsp32 = isEspMode,
                             config = currentConfig
                         )
@@ -3577,7 +3652,7 @@ class MainViewModel : ViewModel() {
                             inferenceTime = infTime,
                             currentFps = smoothedFps,
                             isUserWalking = isWalking,
-                            isLoading = false // Erstes Bild erfolgreich empfangen
+                            isLoading = false
                         )
                     }
             } catch (e: Exception) {
@@ -3608,7 +3683,6 @@ class MainViewModel : ViewModel() {
             detections = emptyList()
         )
 
-        // Asynchroner Abbau wird in cleanupJob gespeichert, damit startStream darauf warten kann
         cleanupJob = viewModelScope.launch(Dispatchers.IO) {
             jobToCancel?.cancel()
             jobToCancel?.join()
@@ -3635,14 +3709,21 @@ class MainViewModel : ViewModel() {
             putFloat("personFloorPhone", s.personFloorPhone)
             putFloat("objectFloorPhone", s.objectFloorPhone)
             putFloat("stairsFloorPhone", s.stairsFloorPhone)
+            putFloat("stopAreaPhone", s.stopAreaPhone)
+            putFloat("warningAreaPhone", s.warningAreaPhone)
+
             putFloat("stopFloorEsp", s.stopFloorEsp)
             putFloat("personFloorEsp", s.personFloorEsp)
             putFloat("objectFloorEsp", s.objectFloorEsp)
             putFloat("stairsFloorEsp", s.stairsFloorEsp)
+            putFloat("stopAreaEsp", s.stopAreaEsp)
+            putFloat("warningAreaEsp", s.warningAreaEsp)
+
             putFloat("confThresholdObjects", s.confThresholdObjects)
             putFloat("confThresholdSurface", s.confThresholdSurface)
             putFloat("nmsIouThreshold", s.nmsIouThreshold)
             putInt("hazardFramesRequired", s.hazardFramesRequired)
+            putInt("surfaceFramesRequired", s.surfaceFramesRequired)
             putInt("clearFramesRequired", s.clearFramesRequired)
         }.apply()
     }
@@ -3658,14 +3739,21 @@ class MainViewModel : ViewModel() {
             personFloorPhone = prefs.getFloat("personFloorPhone", 0.45f),
             objectFloorPhone = prefs.getFloat("objectFloorPhone", 0.50f),
             stairsFloorPhone = prefs.getFloat("stairsFloorPhone", 0.50f),
+            stopAreaPhone = prefs.getFloat("stopAreaPhone", 0.35f),
+            warningAreaPhone = prefs.getFloat("warningAreaPhone", 0.15f),
+
             stopFloorEsp = prefs.getFloat("stopFloorEsp", 0.84f),
             personFloorEsp = prefs.getFloat("personFloorEsp", 0.62f),
             objectFloorEsp = prefs.getFloat("objectFloorEsp", 0.64f),
             stairsFloorEsp = prefs.getFloat("stairsFloorEsp", 0.62f),
+            stopAreaEsp = prefs.getFloat("stopAreaEsp", 0.35f),
+            warningAreaEsp = prefs.getFloat("warningAreaEsp", 0.15f),
+
             confThresholdObjects = prefs.getFloat("confThresholdObjects", 0.40f),
             confThresholdSurface = prefs.getFloat("confThresholdSurface", 0.50f),
             nmsIouThreshold = prefs.getFloat("nmsIouThreshold", 0.40f),
             hazardFramesRequired = prefs.getInt("hazardFramesRequired", 3),
+            surfaceFramesRequired = prefs.getInt("surfaceFramesRequired", 8),
             clearFramesRequired = prefs.getInt("clearFramesRequired", 6)
         )
         com.example.app_blindenstock_add_on.AppConfig.update(loaded)
@@ -3701,17 +3789,25 @@ data class AppConfigState(
     val corridorLeft: Float = 0.32f,
     val corridorRight: Float = 0.68f,
 
-    // Warnabstände für interne Smartphone-Kamera
+    // Warnabstände (Kante) für interne Smartphone-Kamera
     val stopFloorPhone: Float = 0.85f,
     val personFloorPhone: Float = 0.45f,
     val objectFloorPhone: Float = 0.50f,
     val stairsFloorPhone: Float = 0.50f,
 
-    // Warnabstände für ESP32-Kamera
+    // Warnabstände (Fläche/Größe) für interne Smartphone-Kamera
+    val stopAreaPhone: Float = 0.35f,
+    val warningAreaPhone: Float = 0.15f,
+
+    // Warnabstände (Kante) für ESP32-Kamera
     val stopFloorEsp: Float = 0.84f,
     val personFloorEsp: Float = 0.62f,
     val objectFloorEsp: Float = 0.64f,
     val stairsFloorEsp: Float = 0.62f,
+
+    // Warnabstände (Fläche/Größe) für ESP32-Kamera
+    val stopAreaEsp: Float = 0.35f,
+    val warningAreaEsp: Float = 0.15f,
 
     // KI-Erkennungs-Schwellenwerte
     val confThresholdObjects: Float = 0.40f,
@@ -3720,6 +3816,7 @@ data class AppConfigState(
 
     // Frame-Filter (Entprellung)
     val hazardFramesRequired: Int = 3,
+    val surfaceFramesRequired: Int = 8,
     val clearFramesRequired: Int = 6,
 
     // Dynamik & Logik
@@ -4131,9 +4228,12 @@ fun StartScreen(
             ) {
                 FilledTonalButton(
                     onClick = {
-                        viewModel.navigateTo(AppScreen.CAMERA)
-                        viewModel.startStream(context, lifecycleOwner)
+                        if (!uiState.isLoading) {
+                            viewModel.navigateTo(AppScreen.CAMERA)
+                            viewModel.startStream(context, lifecycleOwner)
+                        }
                     },
+                    enabled = !uiState.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp),
@@ -4143,7 +4243,21 @@ fun StartScreen(
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 ) {
-                    Text("Preview & Test Mode", style = MaterialTheme.typography.titleMedium)
+                    if (uiState.isLoading && uiState.isStreaming) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.5.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text("Connecting Camera...", style = MaterialTheme.typography.titleMedium)
+                        }
+                    } else {
+                        Text("Preview & Test Mode", style = MaterialTheme.typography.titleMedium)
+                    }
                 }
 
                 if (uiState.isBackgroundRunning) {
@@ -4160,6 +4274,7 @@ fun StartScreen(
                 } else {
                     FilledTonalButton(
                         onClick = { onStartBackground(uiState.sourceType.name, uiState.streamUrl) },
+                        enabled = !uiState.isLoading,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp),
@@ -4191,7 +4306,7 @@ fun StartScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    Text("Live Tuning Parameters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Live Tuning Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 }
 
                 item {
@@ -4225,34 +4340,38 @@ fun StartScreen(
 
                 item {
                     SectionHeader(
-                        title = "Corridor Boundaries",
+                        title = "Walking Corridor Boundaries",
                         description = "Defines the active walking path. Adjusting these narrows or widens the area where hazards trigger alerts."
                     )
                 }
-                item { SettingSlider("Corridor Left", configState.corridorLeft, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeft = it)) } }
-                item { SettingSlider("Corridor Right", configState.corridorRight, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRight = it)) } }
+                item { SettingSlider("Corridor Edge Left", configState.corridorLeft, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeft = it)) } }
+                item { SettingSlider("Corridor Edge Right", configState.corridorRight, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRight = it)) } }
 
                 item {
                     SectionHeader(
-                        title = "Smartphone Distances",
-                        description = "Safety limits for the internal camera. Lower values mean alerts trigger further away (earlier). Higher values trigger closer (later)."
+                        title = "Smartphone Warning Distances",
+                        description = "Thresholds for the internal camera. Triggers as soon as either the bottom edge or the bounding area exceeds the limit. Lower(-) = Earlier. Higher(+) = Later."
                     )
                 }
-                item { SettingSlider("Stop Floor", configState.stopFloorPhone, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorPhone = it)) } }
-                item { SettingSlider("Person Floor", configState.personFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorPhone = it)) } }
-                item { SettingSlider("Object Floor", configState.objectFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorPhone = it)) } }
-                item { SettingSlider("Stairs Floor", configState.stairsFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorPhone = it)) } }
+                item { SettingSlider("Stop Distance", configState.stopFloorPhone, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorPhone = it)) } }
+                item { SettingSlider("Person Warning Distance", configState.personFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorPhone = it)) } }
+                item { SettingSlider("Object Warning Distance", configState.objectFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorPhone = it)) } }
+                item { SettingSlider("Stairs Warning Distance", configState.stairsFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorPhone = it)) } }
+                item { SettingSlider("Relative Area for Warning", configState.warningAreaPhone, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaPhone = it)) } }
+                item { SettingSlider("Relative Area for Stop", configState.stopAreaPhone, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaPhone = it)) } }
 
                 item {
                     SectionHeader(
-                        title = "ESP32 Distances",
-                        description = "Safety limits for the external cane camera. Lower = further away, Higher = closer."
+                        title = "ESP32 Warning Distances",
+                        description = "Thresholds for the external ESP32 Cam. Triggers as soon as either the bottom edge or the bounding area exceeds the limit. Lower(-) = Earlier. Higher(+) = Later."
                     )
                 }
-                item { SettingSlider("Stop Floor", configState.stopFloorEsp, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorEsp = it)) } }
-                item { SettingSlider("Person Floor", configState.personFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorEsp = it)) } }
-                item { SettingSlider("Object Floor", configState.objectFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorEsp = it)) } }
-                item { SettingSlider("Stairs Floor", configState.stairsFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorEsp = it)) } }
+                item { SettingSlider("Stop Distance", configState.stopFloorEsp, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorEsp = it)) } }
+                item { SettingSlider("Person Warning Distance", configState.personFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorEsp = it)) } }
+                item { SettingSlider("Object Warning Distance", configState.objectFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorEsp = it)) } }
+                item { SettingSlider("Stairs Warning Distance", configState.stairsFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorEsp = it)) } }
+                item { SettingSlider("Relative Area for Warning", configState.warningAreaEsp, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaEsp = it)) } }
+                item { SettingSlider("Relative Area for Stop", configState.stopAreaEsp, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaEsp = it)) } }
 
                 item {
                     SectionHeader(
@@ -4260,17 +4379,18 @@ fun StartScreen(
                         description = "Detection thresholds. Higher values reduce false positives but require the AI to be more certain."
                     )
                 }
-                item { SettingSlider("Object Threshold", configState.confThresholdObjects, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdObjects = it)) } }
-                item { SettingSlider("Surface Threshold", configState.confThresholdSurface, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdSurface = it)) } }
-                item { SettingSlider("NMS Overlap (IoU)", configState.nmsIouThreshold, 0.1f..0.8f) { AppConfig.update(configState.copy(nmsIouThreshold = it)) } }
+                item { SettingSlider("Required Object Confidence", configState.confThresholdObjects, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdObjects = it)) } }
+                item { SettingSlider("Required Surface Confidence", configState.confThresholdSurface, 0.1f..0.8f) { AppConfig.update(configState.copy(confThresholdSurface = it)) } }
+                item { SettingSlider("Box Overlap Limit", configState.nmsIouThreshold, 0.1f..0.8f) { AppConfig.update(configState.copy(nmsIouThreshold = it)) } }
 
                 item {
                     SectionHeader(
-                        title = "Debouncing & Filter",
-                        description = "Controls alert stability. Higher frame counts make alerts more robust but slightly delay the audio response."
+                        title = "Reliability & Accuracy",
+                        description = "Controls alert stability. Higher frame counts make alerts more reliable but slightly delay the audio response."
                     )
                 }
                 item { SettingSliderInt("Required Hazard Frames", configState.hazardFramesRequired, 1..10) { AppConfig.update(configState.copy(hazardFramesRequired = it)) } }
+                item { SettingSliderInt("Required Surface Frames", configState.surfaceFramesRequired, 1..15) { AppConfig.update(configState.copy(surfaceFramesRequired = it)) } }
                 item { SettingSliderInt("Required Clear Frames", configState.clearFramesRequired, 1..15) { AppConfig.update(configState.copy(clearFramesRequired = it)) } }
 
                 item { Spacer(modifier = Modifier.height(24.dp)) }
