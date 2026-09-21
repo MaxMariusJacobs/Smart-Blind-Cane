@@ -517,11 +517,11 @@ fun StartScreen(
                     )
                 }
                 item { SettingSlider("Stop Distance", configState.stopFloorPhone, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorPhone = it)) } }
-                item { SettingSlider("Stop Area (Size)", configState.stopAreaPhone, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaPhone = it)) } }
                 item { SettingSlider("Person Warning Distance", configState.personFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorPhone = it)) } }
                 item { SettingSlider("Object Warning Distance", configState.objectFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorPhone = it)) } }
-                item { SettingSlider("Warning Area (Size)", configState.warningAreaPhone, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaPhone = it)) } }
                 item { SettingSlider("Stairs Warning Distance", configState.stairsFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorPhone = it)) } }
+                item { SettingSlider("Warning Area (Size)", configState.warningAreaPhone, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaPhone = it)) } }
+                item { SettingSlider("Stop Area (Size)", configState.stopAreaPhone, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaPhone = it)) } }
 
                 item {
                     SectionHeader(
@@ -530,11 +530,11 @@ fun StartScreen(
                     )
                 }
                 item { SettingSlider("Stop Distance", configState.stopFloorEsp, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorEsp = it)) } }
-                item { SettingSlider("Stop Area (Size)", configState.stopAreaEsp, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaEsp = it)) } }
                 item { SettingSlider("Person Warning Distance", configState.personFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorEsp = it)) } }
                 item { SettingSlider("Object Warning Distance", configState.objectFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorEsp = it)) } }
-                item { SettingSlider("Warning Area (Size)", configState.warningAreaEsp, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaEsp = it)) } }
                 item { SettingSlider("Stairs Warning Distance", configState.stairsFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(stairsFloorEsp = it)) } }
+                item { SettingSlider("Warning Area (Size)", configState.warningAreaEsp, 0.05f..0.6f) { AppConfig.update(configState.copy(warningAreaEsp = it)) } }
+                item { SettingSlider("Stop Area (Size)", configState.stopAreaEsp, 0.1f..0.8f) { AppConfig.update(configState.copy(stopAreaEsp = it)) } }
 
                 item {
                     SectionHeader(
