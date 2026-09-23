@@ -107,19 +107,13 @@ class MainViewModel : ViewModel() {
 
         val frame = _uiState.value.currentFrame
         if (frame == null) {
-            speechManager?.speakUrgent("Kein Kamerabild verfügbar.")
-            return
-        }
-
-        val standingTime = System.currentTimeMillis() - lastWalkTimeMs
-        if (_uiState.value.isUserWalking || standingTime < 3000L) {
-            speechManager?.speakUrgent("Bitte bleib zuerst für 3 Sekunden stehen.")
+            speechManager?.speakUrgent("No image available")
             return
         }
 
         isFetchingGemini = true
         _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.ANALYZING)
-        speechManager?.speakUrgent("Analysiere Umgebung...")
+        speechManager?.speakUrgent("Analyzing")
 
         viewModelScope.launch(Dispatchers.Main) {
             try {
@@ -127,14 +121,14 @@ class MainViewModel : ViewModel() {
 
                 speechManager?.speakUrgent(description)
 
-                if (description.contains("Keine Verbindung") || description.contains("konnte nicht") || description.contains("zu lange")) {
+                if (description.contains("No connection") || description.contains("could not") || description.contains("too long")) {
                     _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.ERROR)
                 } else {
                     _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.SUCCESS)
                 }
             } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Unerwarteter Fehler", e)
-                speechManager?.speakUrgent("Fehler bei der Analyse der Umgebung.")
+                android.util.Log.e("MainViewModel", "Gemini error", e)
+                speechManager?.speakUrgent("Failed to analyze")
                 _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.ERROR)
             } finally {
                 isFetchingGemini = false
@@ -322,8 +316,11 @@ class MainViewModel : ViewModel() {
         val prefs = context.getSharedPreferences("tuning_prefs", Context.MODE_PRIVATE)
         val s = com.example.app_blindenstock_add_on.AppConfig.currentState.value
         prefs.edit().apply {
-            putFloat("corridorLeft", s.corridorLeft)
-            putFloat("corridorRight", s.corridorRight)
+            putFloat("corridorLeftPhone", s.corridorLeftPhone)
+            putFloat("corridorRightPhone", s.corridorRightPhone)
+            putFloat("corridorLeftEsp", s.corridorLeftEsp)
+            putFloat("corridorRightEsp", s.corridorRightEsp)
+
             putFloat("stopFloorPhone", s.stopFloorPhone)
             putFloat("personFloorPhone", s.personFloorPhone)
             putFloat("objectFloorPhone", s.objectFloorPhone)
@@ -344,16 +341,29 @@ class MainViewModel : ViewModel() {
             putInt("hazardFramesRequired", s.hazardFramesRequired)
             putInt("surfaceFramesRequired", s.surfaceFramesRequired)
             putInt("clearFramesRequired", s.clearFramesRequired)
+
+            putFloat("audioEmergencySec", s.audioEmergencySec)
+            putFloat("audioDirectionChangeSec", s.audioDirectionChangeSec)
+            putFloat("audioStandardSec", s.audioStandardSec)
+            putFloat("audioPersistentRepeatSec", s.audioPersistentRepeatSec)
+
         }.apply()
     }
 
     fun loadTuningConfig(context: Context) {
         val prefs = context.getSharedPreferences("tuning_prefs", Context.MODE_PRIVATE)
-        if (!prefs.contains("corridorLeft")) return
+        if (!prefs.contains("stopFloorPhone")) return
+
+        // Abwärtskompatibilität für alte Speicherstände
+        val oldLeft = prefs.getFloat("corridorLeft", 0.32f)
+        val oldRight = prefs.getFloat("corridorRight", 0.68f)
 
         val loaded = com.example.app_blindenstock_add_on.AppConfigState(
-            corridorLeft = prefs.getFloat("corridorLeft", 0.32f),
-            corridorRight = prefs.getFloat("corridorRight", 0.68f),
+            corridorLeftPhone = prefs.getFloat("corridorLeftPhone", oldLeft),
+            corridorRightPhone = prefs.getFloat("corridorRightPhone", oldRight),
+            corridorLeftEsp = prefs.getFloat("corridorLeftEsp", oldLeft),
+            corridorRightEsp = prefs.getFloat("corridorRightEsp", oldRight),
+
             stopFloorPhone = prefs.getFloat("stopFloorPhone", 0.85f),
             personFloorPhone = prefs.getFloat("personFloorPhone", 0.45f),
             objectFloorPhone = prefs.getFloat("objectFloorPhone", 0.50f),
@@ -373,7 +383,13 @@ class MainViewModel : ViewModel() {
             nmsIouThreshold = prefs.getFloat("nmsIouThreshold", 0.40f),
             hazardFramesRequired = prefs.getInt("hazardFramesRequired", 3),
             surfaceFramesRequired = prefs.getInt("surfaceFramesRequired", 8),
-            clearFramesRequired = prefs.getInt("clearFramesRequired", 6)
+            clearFramesRequired = prefs.getInt("clearFramesRequired", 6),
+
+            audioEmergencySec = prefs.getFloat("audioEmergencySec", 1.2f),
+            audioDirectionChangeSec = prefs.getFloat("audioDirectionChangeSec", 1.4f),
+            audioStandardSec = prefs.getFloat("audioStandardSec", 2.2f),
+            audioPersistentRepeatSec = prefs.getFloat("audioPersistentRepeatSec", 8.0f)
+
         )
         com.example.app_blindenstock_add_on.AppConfig.update(loaded)
     }

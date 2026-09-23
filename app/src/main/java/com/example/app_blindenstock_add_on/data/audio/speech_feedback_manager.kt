@@ -19,9 +19,6 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
     private var consecutiveClearFrames = 0
     private val requiredClearFrames = 8
 
-    private val emergencyCooldownMs = 1200L
-    private val persistentWarningRepeatMs = 3500L
-
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.let { engine ->
@@ -60,7 +57,7 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
         val isHazardClearing = (guidance.priorityLevel == 1) && (lastSpokenPriority >= 2)
 
         if (isHazardClearing) {
-            val minPlayTimeMs = if (lastSpokenPriority == 3) 700L else 1400L
+            val minPlayTimeMs = if (lastSpokenPriority == 3) 750L else 1500L
             val isAudioFinished = (tts?.isSpeaking != true) && (elapsed >= minPlayTimeMs)
             val isStableClear = consecutiveClearFrames >= requiredClearFrames
 
@@ -92,11 +89,14 @@ class SpeechFeedbackManager(context: Context) : TextToSpeech.OnInitListener {
 
         val isSameOrSimilar = isSimilarOrSame(guidance.phrase, lastSpokenPhrase)
 
+        // Aktuelle Config live abrufen
+        val config = com.example.app_blindenstock_add_on.AppConfig.currentState.value
+
         val requiredInterval = when {
-            isEmergencyEscalation -> emergencyCooldownMs
-            isDirectionChange -> 1400L
-            isSameOrSimilar -> persistentWarningRepeatMs
-            else -> 2200L // 2.2 Sekunden Standard-Pause zwischen unterschiedlichen Kommandos (z.B. Stop -> Turn left)
+            isEmergencyEscalation -> (config.audioEmergencySec * 1000).toLong()
+            isDirectionChange -> (config.audioDirectionChangeSec * 1000).toLong()
+            isSameOrSimilar -> (config.audioPersistentRepeatSec * 1000).toLong()
+            else -> (config.audioStandardSec * 1000).toLong()
         }
 
         if (elapsed < requiredInterval && !isEmergencyEscalation) {

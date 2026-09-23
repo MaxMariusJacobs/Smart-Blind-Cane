@@ -503,19 +503,12 @@ fun StartScreen(
 
                 item {
                     SectionHeader(
-                        title = "Walking Corridor Boundaries",
-                        description = "Defines the active walking path. Adjusting these narrows or widens the area where hazards trigger alerts."
-                    )
-                }
-                item { SettingSlider("Corridor Edge Left", configState.corridorLeft, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeft = it)) } }
-                item { SettingSlider("Corridor Edge Right", configState.corridorRight, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRight = it)) } }
-
-                item {
-                    SectionHeader(
                         title = "Smartphone Warning Distances",
                         description = "Thresholds for the internal camera. Triggers as soon as either the bottom edge or the bounding area exceeds the limit. Lower(-) = Earlier. Higher(+) = Later."
                     )
                 }
+                item { SettingSlider("Corridor Edge Left", configState.corridorLeftPhone, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeftPhone = it)) } }
+                item { SettingSlider("Corridor Edge Right", configState.corridorRightPhone, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRightPhone = it)) } }
                 item { SettingSlider("Stop Distance", configState.stopFloorPhone, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorPhone = it)) } }
                 item { SettingSlider("Person Warning Distance", configState.personFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorPhone = it)) } }
                 item { SettingSlider("Object Warning Distance", configState.objectFloorPhone, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorPhone = it)) } }
@@ -529,6 +522,8 @@ fun StartScreen(
                         description = "Thresholds for the external ESP32 Cam. Triggers as soon as either the bottom edge or the bounding area exceeds the limit. Lower(-) = Earlier. Higher(+) = Later."
                     )
                 }
+                item { SettingSlider("Corridor Edge Left", configState.corridorLeftEsp, 0.1f..0.5f) { AppConfig.update(configState.copy(corridorLeftEsp = it)) } }
+                item { SettingSlider("Corridor Edge Right", configState.corridorRightEsp, 0.5f..0.9f) { AppConfig.update(configState.copy(corridorRightEsp = it)) } }
                 item { SettingSlider("Stop Distance", configState.stopFloorEsp, 0.6f..0.95f) { AppConfig.update(configState.copy(stopFloorEsp = it)) } }
                 item { SettingSlider("Person Warning Distance", configState.personFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(personFloorEsp = it)) } }
                 item { SettingSlider("Object Warning Distance", configState.objectFloorEsp, 0.3f..0.8f) { AppConfig.update(configState.copy(objectFloorEsp = it)) } }
@@ -555,6 +550,17 @@ fun StartScreen(
                 item { SettingSliderInt("Required Hazard Frames", configState.hazardFramesRequired, 1..10) { AppConfig.update(configState.copy(hazardFramesRequired = it)) } }
                 item { SettingSliderInt("Required Surface Frames", configState.surfaceFramesRequired, 1..15) { AppConfig.update(configState.copy(surfaceFramesRequired = it)) } }
                 item { SettingSliderInt("Required Clear Frames", configState.clearFramesRequired, 1..15) { AppConfig.update(configState.copy(clearFramesRequired = it)) } }
+
+                item {
+                    SectionHeader(
+                        title = "Audio Cooldown",
+                        description = "Cooldown in seconds before repeating identical alerts or shifting to a new alert."
+                    )
+                }
+                item { SettingSlider("Emergency Cooldown", configState.audioEmergencySec, 0.5f..3.0f) { AppConfig.update(configState.copy(audioEmergencySec = it)) } }
+                item { SettingSlider("Direction Change Delay", configState.audioDirectionChangeSec, 0.5f..4.0f) { AppConfig.update(configState.copy(audioDirectionChangeSec = it)) } }
+                item { SettingSlider("Standard Object Delay", configState.audioStandardSec, 1.0f..5.0f) { AppConfig.update(configState.copy(audioStandardSec = it)) } }
+                item { SettingSlider("Persistent Repeat Delay", configState.audioPersistentRepeatSec, 3.0f..20.0f) { AppConfig.update(configState.copy(audioPersistentRepeatSec = it)) } }
 
                 item { Spacer(modifier = Modifier.height(24.dp)) }
             }

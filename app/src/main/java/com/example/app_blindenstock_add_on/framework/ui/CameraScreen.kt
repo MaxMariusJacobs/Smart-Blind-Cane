@@ -29,6 +29,8 @@ import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
 @Composable
 fun CameraScreen(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsState()
+    val configState by com.example.app_blindenstock_add_on.AppConfig.currentState.collectAsState()
+    val isEsp32 = uiState.sourceType == com.example.app_blindenstock_add_on.framework.viewmodel.SourceType.MJPEG
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -98,16 +100,19 @@ fun CameraScreen(viewModel: MainViewModel) {
                             val canvasWidth = size.width
                             val canvasHeight = size.height
 
+                            val currentCorridorLeft = if (isEsp32) configState.corridorLeftEsp else configState.corridorLeftPhone
+                            val currentCorridorRight = if (isEsp32) configState.corridorRightEsp else configState.corridorRightPhone
+
                             drawLine(
                                 color = Color.White.copy(alpha = 0.2f),
-                                start = Offset(canvasWidth * 0.32f, 0f),
-                                end = Offset(canvasWidth * 0.32f, canvasHeight),
+                                start = Offset(canvasWidth * currentCorridorLeft, 0f),
+                                end = Offset(canvasWidth * currentCorridorLeft, canvasHeight),
                                 strokeWidth = 3f
                             )
                             drawLine(
                                 color = Color.White.copy(alpha = 0.2f),
-                                start = Offset(canvasWidth * 0.68f, 0f),
-                                end = Offset(canvasWidth * 0.68f, canvasHeight),
+                                start = Offset(canvasWidth * currentCorridorRight, 0f),
+                                end = Offset(canvasWidth * currentCorridorRight, canvasHeight),
                                 strokeWidth = 3f
                             )
 

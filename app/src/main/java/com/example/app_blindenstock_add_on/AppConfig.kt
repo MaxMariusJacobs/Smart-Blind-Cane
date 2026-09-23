@@ -3,9 +3,13 @@ package com.example.app_blindenstock_add_on
 import kotlinx.coroutines.flow.MutableStateFlow
 
 data class AppConfigState(
-    // Geh-Korridor
-    val corridorLeft: Float = 0.32f,
-    val corridorRight: Float = 0.68f,
+    // Geh-Korridor für interne Smartphone-Kamera
+    val corridorLeftPhone: Float = 0.32f,
+    val corridorRightPhone: Float = 0.68f,
+
+    // Geh-Korridor für ESP32-Kamera
+    val corridorLeftEsp: Float = 0.32f,
+    val corridorRightEsp: Float = 0.68f,
 
     // Warnabstände (Kante) für interne Smartphone-Kamera
     val stopFloorPhone: Float = 0.85f,
@@ -39,7 +43,14 @@ data class AppConfigState(
 
     // Dynamik & Logik
     val evadeLockMs: Long = 3500L,
-    val trendGrowthPerSec: Float = 0.15f
+    val trendGrowthPerSec: Float = 0.15f,
+
+    // Audio Feedback Timings (in Sekunden)
+    val audioEmergencySec: Float = 1.2f,       // Notfall-Stop
+    val audioDirectionChangeSec: Float = 1.4f, // Richtungswechsel
+    val audioStandardSec: Float = 2.2f,        // Normale neue Objekte
+    val audioPersistentRepeatSec: Float = 8.0f // Wiederholung des gleichen Objekts
+
 )
 
 object AppConfig {

@@ -59,17 +59,17 @@ class SceneDescriptionService {
 
                     if (!response.isSuccessful) {
                         Log.e("SceneDescription", "API-Fehler HTTP ${response.code}: $responseBody")
-                        return@withContext "Beschreibung konnte nicht abgerufen werden."
+                        return@withContext "Not able to get description"
                     }
 
                     parseResponse(responseBody)
                 }
             } catch (e: java.net.SocketTimeoutException) {
                 Log.e("SceneDescription", "SocketTimeoutException nach angepasstem Timeout", e)
-                "Die Umgebungsanalyse hat zu lange gedauert."
+                "Scene analysis took too long"
             } catch (e: Exception) {
                 Log.e("SceneDescription", "Netzwerkfehler", e)
-                "Keine Verbindung zur Umgebungsbeschreibung."
+                "No connection to scene description"
             }
         }
     }

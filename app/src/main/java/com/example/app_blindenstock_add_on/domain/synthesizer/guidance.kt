@@ -32,6 +32,10 @@ object GuidanceSynthesizer {
         val detections = result.detections
         val hasStairsVisible = detections.any { it.className == "stairs" }
 
+        // Dynamische Korridor-Auswahl je nach aktiver Kamera
+        val currentCorridorLeft = if (isEsp32) config.corridorLeftEsp else config.corridorLeftPhone
+        val currentCorridorRight = if (isEsp32) config.corridorRightEsp else config.corridorRightPhone
+
         val stopFloorThreshold = if (isEsp32) config.stopFloorEsp else config.stopFloorPhone
         val personFloorMin = if (isEsp32) config.personFloorEsp else config.personFloorPhone
         val objectFloorMin = if (isEsp32) config.objectFloorEsp else config.objectFloorPhone
@@ -48,7 +52,7 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
+            val inCorridor = (boxLeft < currentCorridorRight && boxRight > currentCorridorLeft)
 
             val isDistanceCritical = floorY > stopFloorThreshold || area >= stopAreaThreshold
             val isTorsoImminent = (det.className == "person") && (area > 0.15f || det.boundingBox.width > 0.28f) && (floorY > 0.55f)
@@ -73,13 +77,13 @@ object GuidanceSynthesizer {
                 val hasObstacleLeft = threatBlocksLeft || detections.any {
                     it != imminentThreat &&
                             it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
-                            (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) < currentCorridorLeft &&
                             (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                 }
                 val hasObstacleRight = threatBlocksRight || detections.any {
                     it != imminentThreat &&
                             it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
-                            (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) > currentCorridorRight &&
                             (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                 }
 
@@ -118,7 +122,7 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
+            val inCorridor = (boxLeft < currentCorridorRight && boxRight > currentCorridorLeft)
             val inDistance = (floorY in personFloorMin..stopFloorThreshold) || (area in warningAreaThreshold..stopAreaThreshold)
 
             inCorridor && inDistance
@@ -141,13 +145,13 @@ object GuidanceSynthesizer {
                 val hasObstacleLeft = personBlocksLeft || detections.any {
                     it != corridorPerson &&
                             it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
-                            (it.boundingBox.x + it.boundingBox.width / 2f) < config.corridorLeft &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) < currentCorridorLeft &&
                             (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                 }
                 val hasObstacleRight = personBlocksRight || detections.any {
                     it != corridorPerson &&
                             it.className !in listOf("sidewalk", "path", "roadway", "stairs") &&
-                            (it.boundingBox.x + it.boundingBox.width / 2f) > config.corridorRight &&
+                            (it.boundingBox.x + it.boundingBox.width / 2f) > currentCorridorRight &&
                             (it.boundingBox.y + it.boundingBox.height) > flankThreshold
                 }
 
@@ -187,7 +191,7 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            val inCorridor = (boxLeft < config.corridorRight && boxRight > config.corridorLeft)
+            val inCorridor = (boxLeft < currentCorridorRight && boxRight > currentCorridorLeft)
             val inDistance = (floorY in objectFloorMin..stopFloorThreshold) || (area in warningAreaThreshold..stopAreaThreshold)
 
             inCorridor && inDistance
@@ -211,7 +215,7 @@ object GuidanceSynthesizer {
             val area = det.boundingBox.width * det.boundingBox.height
 
             det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck") &&
-                    (boxLeft < config.corridorRight && boxRight > config.corridorLeft) &&
+                    (boxLeft < currentCorridorRight && boxRight > currentCorridorLeft) &&
                     ((floorY in objectFloorMin..stopFloorThreshold) || (area in warningAreaThreshold..stopAreaThreshold))
         }
 
@@ -232,7 +236,7 @@ object GuidanceSynthesizer {
             val boxLeft = det.boundingBox.x
             val boxRight = det.boundingBox.x + det.boundingBox.width
             val floorY = det.boundingBox.y + det.boundingBox.height
-            det.className == "stairs" && (boxLeft < config.corridorRight && boxRight > config.corridorLeft) && floorY > stairsFloorMin
+            det.className == "stairs" && (boxLeft < currentCorridorRight && boxRight > currentCorridorLeft) && floorY > stairsFloorMin
         }
 
         if (stairsHazard != null && isUserWalking) {

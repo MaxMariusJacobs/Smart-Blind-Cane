@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +52,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         viewModel = MainViewModel()
         viewModel.loadUrl(this)
 
@@ -75,29 +78,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private var lastVolUpTime = 0L
-    private var lastVolDownTime = 0L
+    private var lastVolDirection = 0
+    private var lastVolTime = 0L
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val isBackground = viewModel.uiState.value.isBackgroundRunning
-        val now = System.currentTimeMillis()
 
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            lastVolDownTime = now
-            if (kotlin.math.abs(now - lastVolUpTime) < 400L) {
-                lastVolUpTime = 0L
-                lastVolDownTime = 0L
-                if (!isBackground) viewModel.triggerSceneDescription()
+        // Wenn der Hintergrunddienst läuft, kümmert sich dieser um den Trigger
+        if (isBackground) return super.onKeyDown(keyCode, event)
+
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            // Verhindert mehrfaches Auslösen, wenn die Taste gedrückt gehalten wird
+            if (event?.repeatCount == 0) {
+                val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
+                val now = System.currentTimeMillis()
+
+                // Prüfen ob die andere Taste innerhalb von 500ms gedrückt wurde (Zick-Zack)
+                if (now - lastVolTime < 500L && direction != lastVolDirection) {
+                    lastVolTime = 0L
+                    viewModel.triggerSceneDescription()
+                } else {
+                    lastVolDirection = direction
+                    lastVolTime = now
+                }
             }
-            return super.onKeyDown(keyCode, event) // Wichtig: Lautstärke-Änderung durchs System zulassen!
-        } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            lastVolUpTime = now
-            if (kotlin.math.abs(now - lastVolDownTime) < 400L) {
-                lastVolUpTime = 0L
-                lastVolDownTime = 0L
-                if (!isBackground) viewModel.triggerSceneDescription()
-            }
-            return super.onKeyDown(keyCode, event) // Wichtig: Lautstärke-Änderung durchs System zulassen!
+            return super.onKeyDown(keyCode, event) // Lautstärke normal ändern lassen
         }
         return super.onKeyDown(keyCode, event)
     }
