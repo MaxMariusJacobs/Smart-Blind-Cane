@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -72,6 +73,33 @@ class MainActivity : ComponentActivity() {
         } else {
             checkBatteryOptimization()
         }
+    }
+
+    private var lastVolUpTime = 0L
+    private var lastVolDownTime = 0L
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val isBackground = viewModel.uiState.value.isBackgroundRunning
+        val now = System.currentTimeMillis()
+
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            lastVolDownTime = now
+            if (kotlin.math.abs(now - lastVolUpTime) < 400L) {
+                lastVolUpTime = 0L
+                lastVolDownTime = 0L
+                if (!isBackground) viewModel.triggerSceneDescription()
+            }
+            return super.onKeyDown(keyCode, event) // Wichtig: Lautstärke-Änderung durchs System zulassen!
+        } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            lastVolUpTime = now
+            if (kotlin.math.abs(now - lastVolDownTime) < 400L) {
+                lastVolUpTime = 0L
+                lastVolDownTime = 0L
+                if (!isBackground) viewModel.triggerSceneDescription()
+            }
+            return super.onKeyDown(keyCode, event) // Wichtig: Lautstärke-Änderung durchs System zulassen!
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     private fun hasAllPermissions(): Boolean = requiredPermissions.all {

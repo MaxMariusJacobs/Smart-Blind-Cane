@@ -23,6 +23,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.app_blindenstock_add_on.framework.viewmodel.AppScreen
+import com.example.app_blindenstock_add_on.framework.viewmodel.GeminiStatus
 import com.example.app_blindenstock_add_on.framework.viewmodel.MainViewModel
 
 @Composable
@@ -162,6 +163,12 @@ fun CameraScreen(viewModel: MainViewModel) {
                         Text(if (uiState.isUserWalking) "Walking" else "Standing", color = Color.White, style = MaterialTheme.typography.labelMedium)
                     }
 
+                    // --- NEU: Ausgelagertes Overlay aufrufen ---
+                    GeminiStatusOverlay(
+                        status = uiState.geminiStatus,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+
                 } else {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -241,6 +248,64 @@ fun CameraScreen(viewModel: MainViewModel) {
                     text = "Stop",
                     style = MaterialTheme.typography.titleMedium
                 )
+            }
+        }
+    }
+}
+
+// --- NEU: Ausgelagerte Composable um den ColumnScope-Konflikt zu vermeiden ---
+@Composable
+fun GeminiStatusOverlay(
+    status: GeminiStatus,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = status != GeminiStatus.IDLE,
+        enter = fadeIn() + slideInVertically { it / 2 },
+        exit = fadeOut() + slideOutVertically { it / 2 },
+        modifier = modifier
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color.Black.copy(alpha = 0.7f),
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                when (status) {
+                    GeminiStatus.ANALYZING -> {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 2.dp
+                        )
+                        Text(
+                            text = "Analyzing Scene...",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    GeminiStatus.SUCCESS -> {
+                        Text(
+                            text = "Analysis Complete",
+                            color = Color(0xFF22C55E),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    GeminiStatus.ERROR -> {
+                        Text(
+                            text = "Analysis Failed",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    else -> {}
+                }
             }
         }
     }

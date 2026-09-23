@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.inputStream())
+}
+val geminiKey = localProperties.getProperty("GEMINI_API_KEY") ?: "NO_KEY"
 
 android {
     namespace = "com.example.app_blindenstock_add_on"
@@ -11,10 +20,13 @@ android {
         applicationId = "com.example.app_blindenstock_add_on"
         minSdk = 34
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 7
+        versionName = "1.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
+
     }
 
     buildTypes {
@@ -35,6 +47,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true // NEU: Generierung der BuildConfig aktivieren
     }
 }
 

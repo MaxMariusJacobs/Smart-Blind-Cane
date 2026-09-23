@@ -7,6 +7,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.media.AudioManager
+import android.media.VolumeProvider
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -17,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.data.audio.SceneDescriptionService
 import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
 import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
 import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
@@ -25,6 +31,7 @@ import com.example.app_blindenstock_add_on.data.video.VideoSource
 import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
 import com.example.app_blindenstock_add_on.domain.model.Detection
 import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
+import com.example.app_blindenstock_add_on.framework.viewmodel.GeminiStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,7 +50,8 @@ data class ServiceMetrics(
     val isRunning: Boolean = false,
     val currentPhrase: String = "Clear",
     val detections: List<Detection> = emptyList(),
-    val primarySurface: String = "unknown"
+    val primarySurface: String = "unknown",
+    val geminiStatus: GeminiStatus = GeminiStatus.IDLE
 )
 
 class AppForegroundService : Service(), LifecycleOwner {
@@ -66,6 +74,18 @@ class AppForegroundService : Service(), LifecycleOwner {
     private var fpsWindowStart = 0L
     private var smoothedFps = 0
 
+    // --- Gemini Background Setup ---
+    private var mediaSession: MediaSession? = null
+    private lateinit var audioManager: AudioManager
+
+    @Volatile private var latestFrame: Bitmap? = null
+    private var isFetchingGemini = false
+    private val sceneDescriptionService = SceneDescriptionService()
+    private var lastWalkTimeMs = System.currentTimeMillis()
+
+    private var lastVolumeUpTime = 0L
+    private var lastVolumeDownTime = 0L
+
     companion object {
         private const val CHANNEL_ID = "AppForegroundServiceChannel"
         private const val NOTIFICATION_ID = 1
@@ -87,6 +107,85 @@ class AppForegroundService : Service(), LifecycleOwner {
 
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "AppForegroundService::WifiLock")
+
+        // MediaSession für globales Abfangen der Lautstärketasten initialisieren
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        mediaSession = MediaSession(this, "SmartCaneMediaSession").apply {
+            setPlaybackState(
+                PlaybackState.Builder()
+                    .setState(PlaybackState.STATE_PLAYING, 0, 1f)
+                    .build()
+            )
+            setPlaybackToRemote(object : VolumeProvider(VolumeProvider.VOLUME_CONTROL_RELATIVE, 100, 50) {
+                override fun onAdjustVolume(direction: Int) {
+                    handleVolumeChange(direction)
+                }
+            })
+            isActive = true
+        }
+    }
+
+    // Verarbeitet global Lautstärketasten im Hintergrund
+    private fun handleVolumeChange(direction: Int) {
+        val now = System.currentTimeMillis()
+
+        // Lautstärkeänderung an das System durchreichen (damit der Nutzer sie trotzdem verändern kann)
+        audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+
+        if (direction == AudioManager.ADJUST_RAISE) {
+            lastVolumeUpTime = now
+        } else if (direction == AudioManager.ADJUST_LOWER) {
+            lastVolumeDownTime = now
+        }
+
+        // Gleichzeitiger Klick (innerhalb von 400ms)
+        if (kotlin.math.abs(lastVolumeUpTime - lastVolumeDownTime) < 400L) {
+            lastVolumeUpTime = 0L
+            lastVolumeDownTime = 0L
+            triggerGeminiAnalysis()
+        }
+    }
+
+    private fun triggerGeminiAnalysis() {
+        if (isFetchingGemini) return
+
+        val frame = latestFrame
+        if (frame == null) {
+            speechManager?.speakUrgent("Kein Kamerabild verfügbar.")
+            return
+        }
+
+        val standingTime = System.currentTimeMillis() - lastWalkTimeMs
+        val isWalking = motionTracker?.isUserWalking ?: false
+        if (isWalking || standingTime < 3000L) {
+            speechManager?.speakUrgent("Bitte bleib zuerst für 3 Sekunden stehen.")
+            return
+        }
+
+        isFetchingGemini = true
+        _metrics.value = _metrics.value.copy(geminiStatus = GeminiStatus.ANALYZING)
+        speechManager?.speakUrgent("Analysiere Umgebung...")
+
+        serviceScope.launch {
+            try {
+                val description = sceneDescriptionService.describeScene(frame)
+                speechManager?.speakUrgent(description)
+
+                if (description.contains("Keine Verbindung") || description.contains("konnte nicht")) {
+                    _metrics.value = _metrics.value.copy(geminiStatus = GeminiStatus.ERROR)
+                } else {
+                    _metrics.value = _metrics.value.copy(geminiStatus = GeminiStatus.SUCCESS)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("AppForegroundService", "Gemini error", e)
+                speechManager?.speakUrgent("Fehler bei der Analyse.")
+                _metrics.value = _metrics.value.copy(geminiStatus = GeminiStatus.ERROR)
+            } finally {
+                isFetchingGemini = false
+                kotlinx.coroutines.delay(3000)
+                _metrics.value = _metrics.value.copy(geminiStatus = GeminiStatus.IDLE)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -134,6 +233,8 @@ class AppForegroundService : Service(), LifecycleOwner {
                     ?.collect { bitmap ->
                         val currentTime = System.currentTimeMillis()
 
+                        latestFrame = bitmap // Frame zwischenspeichern für Gemini
+
                         fpsCounter++
                         val elapsed = currentTime - fpsWindowStart
                         if (elapsed >= 1000L) {
@@ -143,6 +244,8 @@ class AppForegroundService : Service(), LifecycleOwner {
                         }
 
                         val isWalking = motionTracker?.isUserWalking ?: false
+                        if (isWalking) lastWalkTimeMs = currentTime // Standzeit tracken
+
                         val currentConfig = AppConfig.currentState.value
 
                         val analysisResult = detector?.detect(bitmap, isWalking, currentConfig, allowSurfaceScans) ?: return@collect
@@ -156,6 +259,7 @@ class AppForegroundService : Service(), LifecycleOwner {
                         )
                         speechManager?.processGuidance(guidance)
 
+                        // Erhalte bestehenden geminiStatus, damit das UI-Overlay nicht flackert
                         _metrics.value = ServiceMetrics(
                             fps = smoothedFps,
                             inferenceTime = detector?.lastInferenceTime ?: 0L,
@@ -164,7 +268,8 @@ class AppForegroundService : Service(), LifecycleOwner {
                             isRunning = true,
                             currentPhrase = guidance.phrase,
                             detections = analysisResult.detections,
-                            primarySurface = analysisResult.primarySurface
+                            primarySurface = analysisResult.primarySurface,
+                            geminiStatus = _metrics.value.geminiStatus
                         )
                     }
             } catch (e: Exception) {
@@ -178,6 +283,10 @@ class AppForegroundService : Service(), LifecycleOwner {
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
+
+        mediaSession?.isActive = false
+        mediaSession?.release()
+        mediaSession = null
 
         videoSource?.stop()
         videoSource = null

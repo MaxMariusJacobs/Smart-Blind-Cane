@@ -13,9 +13,6 @@ import kotlinx.coroutines.isActive
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 class MjpegStreamer(
@@ -37,7 +34,7 @@ class MjpegStreamer(
         .build()
 
     private val decodeOptions = BitmapFactory.Options().apply {
-        inSampleSize = 2
+        // inSampleSize = 2 ENTFERNT (siehe Punkt 2)
         inPreferredConfig = Bitmap.Config.RGB_565
     }
 
@@ -74,13 +71,28 @@ class MjpegStreamer(
                 retryAttempt = 0
                 wasConnectedBefore = true
 
-                val bufferedInput = BufferedInputStream(body.byteStream(), 65536)
+                // --- NEU: Okio nutzen für extrem schnelles, GC-schonendes Lesen ---
+                val source = body.source()
+                var contentLength = -1
+
                 try {
                     while (currentCoroutineContext().isActive && !isManuallyStopped) {
-                        val frameBytes = readJpegFrame(bufferedInput) ?: break
-                        val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
-                        if (bitmap != null) {
-                            emit(bitmap)
+                        val line = source.readUtf8Line() ?: break
+
+                        if (line.startsWith("Content-Length:", ignoreCase = true)) {
+                            contentLength = line.substringAfter(":").trim().toIntOrNull() ?: -1
+
+                            // Die leere Zeile (\r\n) nach dem Header überspringen
+                            source.readUtf8Line()
+
+                            if (contentLength > 0) {
+                                // Blockiert, bis das gesamte Bild im RAM ist - ohne Byte-Schleife
+                                val imageBytes = source.readByteArray(contentLength.toLong())
+                                val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, decodeOptions)
+                                if (bitmap != null) {
+                                    emit(bitmap)
+                                }
+                            }
                         }
                     }
                 } finally {
@@ -96,7 +108,6 @@ class MjpegStreamer(
                     onStatusMessage?.invoke("Connection lost, reconnecting.")
                 }
 
-                // Exponential Backoff: 1s, 2s, 4s, maximal 5s Pause
                 val backoffMs = minOf(1000L * (1L shl minOf(retryAttempt - 1, 2)), 5000L)
                 delay(backoffMs)
             } finally {
@@ -113,30 +124,5 @@ class MjpegStreamer(
             Log.w("MjpegStreamer", "Error stopping call: ${e.message}")
         }
         activeCall = null
-    }
-
-    private fun readJpegFrame(stream: InputStream): ByteArray? {
-        val buffer = ByteArrayOutputStream(32768)
-        var prevByte = -1
-        var inFrame = false
-
-        while (true) {
-            val currByte = stream.read()
-            if (currByte == -1) return null
-
-            if (!inFrame) {
-                if (prevByte == 0xFF && currByte == 0xD8) {
-                    inFrame = true
-                    buffer.write(prevByte)
-                    buffer.write(currByte)
-                }
-            } else {
-                buffer.write(currByte)
-                if (prevByte == 0xFF && currByte == 0xD9) {
-                    return buffer.toByteArray()
-                }
-            }
-            prevByte = currByte
-        }
     }
 }

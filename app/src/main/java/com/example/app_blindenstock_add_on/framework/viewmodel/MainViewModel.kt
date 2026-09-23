@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.app_blindenstock_add_on.AppConfig
+import com.example.app_blindenstock_add_on.data.audio.SceneDescriptionService
 import com.example.app_blindenstock_add_on.data.audio.SpeechFeedbackManager
 import com.example.app_blindenstock_add_on.data.sensor.UserMotionTracker
 import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
@@ -18,6 +19,7 @@ import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesize
 import com.example.app_blindenstock_add_on.framework.system_services.AppForegroundService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +31,7 @@ import java.util.Locale
 
 enum class AppScreen { START, CAMERA }
 enum class SourceType { MJPEG, CAMERA }
+enum class GeminiStatus { IDLE, ANALYZING, SUCCESS, ERROR }
 
 data class MainUiState(
     val currentScreen: AppScreen = AppScreen.START,
@@ -48,7 +51,8 @@ data class MainUiState(
     val isBackgroundRunning: Boolean = false,
     val isUserWalking: Boolean = false,
     val inferenceTime: Long = 0,
-    val currentFps: Int = 0
+    val currentFps: Int = 0,
+    val geminiStatus: GeminiStatus = GeminiStatus.IDLE
 )
 
 class MainViewModel : ViewModel() {
@@ -64,9 +68,14 @@ class MainViewModel : ViewModel() {
     private var motionTracker: UserMotionTracker? = null
     private var speechManager: SpeechFeedbackManager? = null
 
+    private val sceneDescriptionService = SceneDescriptionService()
+
     private var fpsCounter = 0
     private var fpsWindowStart = 0L
     private var smoothedFps = 0
+
+    private var isFetchingGemini = false
+    private var lastWalkTimeMs = System.currentTimeMillis()
 
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
@@ -81,9 +90,56 @@ class MainViewModel : ViewModel() {
                         isUserWalking = metrics.isWalking,
                         currentGuidancePhrase = metrics.currentPhrase,
                         detections = metrics.detections,
-                        primarySurface = metrics.primarySurface
+                        primarySurface = metrics.primarySurface,
+                        geminiStatus = metrics.geminiStatus
                     )
+
+                    if (metrics.isWalking) {
+                        lastWalkTimeMs = System.currentTimeMillis()
+                    }
                 }
+            }
+        }
+    }
+
+    fun triggerSceneDescription() {
+        if (isFetchingGemini) return
+
+        val frame = _uiState.value.currentFrame
+        if (frame == null) {
+            speechManager?.speakUrgent("Kein Kamerabild verfügbar.")
+            return
+        }
+
+        val standingTime = System.currentTimeMillis() - lastWalkTimeMs
+        if (_uiState.value.isUserWalking || standingTime < 3000L) {
+            speechManager?.speakUrgent("Bitte bleib zuerst für 3 Sekunden stehen.")
+            return
+        }
+
+        isFetchingGemini = true
+        _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.ANALYZING)
+        speechManager?.speakUrgent("Analysiere Umgebung...")
+
+        viewModelScope.launch(Dispatchers.Main) {
+            try {
+                val description = sceneDescriptionService.describeScene(frame)
+
+                speechManager?.speakUrgent(description)
+
+                if (description.contains("Keine Verbindung") || description.contains("konnte nicht") || description.contains("zu lange")) {
+                    _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.ERROR)
+                } else {
+                    _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.SUCCESS)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Unerwarteter Fehler", e)
+                speechManager?.speakUrgent("Fehler bei der Analyse der Umgebung.")
+                _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.ERROR)
+            } finally {
+                isFetchingGemini = false
+                delay(3000)
+                _uiState.value = _uiState.value.copy(geminiStatus = GeminiStatus.IDLE)
             }
         }
     }
@@ -184,6 +240,8 @@ class MainViewModel : ViewModel() {
                         val isWalking = motionTracker?.isUserWalking ?: false
                         val currentConfig = AppConfig.currentState.value
                         val runSurface = _uiState.value.isSurfaceScanEnabled
+
+                        if (isWalking) lastWalkTimeMs = currentTime
 
                         val result = detector?.detect(bitmap, isWalking, currentConfig, runSurface) ?: return@collect
                         val infTime = detector?.lastInferenceTime ?: 0L
