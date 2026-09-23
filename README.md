@@ -65,4 +65,4 @@ The Android app is deeply optimized for the Tensor architecture of Google Pixel 
 
 3. **Everyday Operation:**
 * **Live Tuning:** Warning distances and walking corridors can be calibrated separately for the smartphone and ESP32 camera via the gear icon.
-* **Scene Analysis (Gemini):** Press one of the **volume buttons**, followed by an immediate counter-movement (e.g., Volume Up and immediately Volume Down within 0.5 seconds). Normal walking navigation will pause, the system takes a high-resolution photo, and reads out a detailed description of the environment. This also works when the screen is locked and the phone is in your pocket.
+* **Scene Analysis (Gemini):** Press one of the **volume buttons**, followed by an immediate counter-movement (e.g., Volume Up and immediately Volume Down within 0.5 seconds). Normal walking navigation will pause, the system takes a snapshot of the current camera view, and reads out a detailed description of the environment. This also works when the screen is locked and the phone is in your pocket.
