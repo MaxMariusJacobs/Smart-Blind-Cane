@@ -78,36 +78,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private var lastVolDirection = 0
-    private var lastVolTime = 0L
-
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        val isBackground = viewModel.uiState.value.isBackgroundRunning
-
-        // Wenn der Hintergrunddienst läuft, kümmert sich dieser um den Trigger.
-        // Das verhindert, dass Gemini zweimal gleichzeitig API-Calls feuert!
-        if (isBackground) return super.onKeyDown(keyCode, event)
-
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            // Verhindert mehrfaches Auslösen, wenn die Taste gedrückt gehalten wird
-            if (event?.repeatCount == 0) {
-                val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
-                val now = System.currentTimeMillis()
-
-                // Zeitfenster auf 800ms erhöht (analog zum Background Service)
-                if (now - lastVolTime < 800L && direction != lastVolDirection) {
-                    lastVolTime = 0L
-                    viewModel.triggerSceneDescription()
-                } else {
-                    lastVolDirection = direction
-                    lastVolTime = now
-                }
-            }
-            return super.onKeyDown(keyCode, event) // Lautstärke normal ändern lassen
-        }
-        return super.onKeyDown(keyCode, event)
-    }
-
     private fun hasAllPermissions(): Boolean = requiredPermissions.all {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
