@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.app_blindenstock_add_on"
         minSdk = 34
         targetSdk = 35
-        versionCode = 11
-        versionName = "2.2"
+        versionCode = 12
+        versionName = "2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
