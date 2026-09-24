@@ -46,7 +46,7 @@ The Android app is deeply optimized for the Tensor architecture of Google Pixel 
 * Connect the Pixel smartphone via USB (USB debugging enabled).
 * Build the project and install the app (`Shift + F10`).
 * On the first launch, it is mandatory to grant all requested permissions (Camera, Location, Audio, Background Services).
-* Also go into the accessibility-Settings and grant the App permission there. 
+* Also go into the Accessibility-Settings and grant the App permission there. 
 
 
 
