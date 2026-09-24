@@ -53,17 +53,14 @@ object GuidanceSynthesizer {
             val area = det.boundingBox.width * det.boundingBox.height
 
             val inCorridor = (boxLeft < currentCorridorRight && boxRight > currentCorridorLeft)
-
             val isDistanceCritical = floorY > stopFloorThreshold || area >= stopAreaThreshold
-            val isTorsoImminent = (det.className == "person") && (area > 0.15f || det.boundingBox.width > 0.28f) && (floorY > 0.55f)
-            val isTtcCritical = det.ttcSec in 0.2f..1.3f && det.trend == "growing"
 
-            inCorridor && (isDistanceCritical || isTorsoImminent || isTtcCritical)
+            inCorridor && isDistanceCritical
         }
 
         if (imminentThreat != null) {
             hazardFrameCounter++
-            surfaceFrameCounter = 0 // Reset
+            surfaceFrameCounter = 0
             clearFrameCounter = 0
             if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val tLeft = imminentThreat.boundingBox.x
@@ -130,7 +127,7 @@ object GuidanceSynthesizer {
 
         if (corridorPerson != null) {
             hazardFrameCounter++
-            surfaceFrameCounter = 0 // Reset
+            surfaceFrameCounter = 0
             clearFrameCounter = 0
 
             if (hazardFrameCounter >= config.hazardFramesRequired) {
@@ -183,7 +180,7 @@ object GuidanceSynthesizer {
         }
 
         val vehicleHazard = detections.firstOrNull { det ->
-            val isVehicle = det.className in listOf("bicycle", "car", "motorcycle", "bus", "truck")
+            val isVehicle = det.className in listOf("bicycle", "car", "motorcycle", "bus", "truck", "train")
             if (!isVehicle) return@firstOrNull false
 
             val boxLeft = det.boundingBox.x
@@ -199,7 +196,7 @@ object GuidanceSynthesizer {
 
         if (vehicleHazard != null && isUserWalking) {
             hazardFrameCounter++
-            surfaceFrameCounter = 0 // Reset
+            surfaceFrameCounter = 0
             clearFrameCounter = 0
             if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val vehicleName = formatSpecificObjectName(vehicleHazard.className)
@@ -214,14 +211,14 @@ object GuidanceSynthesizer {
             val floorY = det.boundingBox.y + det.boundingBox.height
             val area = det.boundingBox.width * det.boundingBox.height
 
-            det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck") &&
+            det.className !in listOf("sidewalk", "path", "roadway", "stairs", "person", "bicycle", "car", "motorcycle", "bus", "truck", "train") &&
                     (boxLeft < currentCorridorRight && boxRight > currentCorridorLeft) &&
                     ((floorY in objectFloorMin..stopFloorThreshold) || (area in warningAreaThreshold..stopAreaThreshold))
         }
 
         if (staticObstacle != null && isUserWalking) {
             hazardFrameCounter++
-            surfaceFrameCounter = 0 // Reset
+            surfaceFrameCounter = 0
             clearFrameCounter = 0
             if (hazardFrameCounter >= config.hazardFramesRequired) {
                 val obstacleName = formatSpecificObjectName(staticObstacle.className)
@@ -229,8 +226,6 @@ object GuidanceSynthesizer {
             }
             return GuidanceOutput("Clear", isEmergency = false, priorityLevel = 1)
         }
-
-        // --- AB HIER: SURFACE LOGIK (Nutzt den eigenen surfaceFrameCounter) ---
 
         val stairsHazard = detections.firstOrNull { det ->
             val boxLeft = det.boundingBox.x
@@ -241,7 +236,7 @@ object GuidanceSynthesizer {
 
         if (stairsHazard != null && isUserWalking) {
             surfaceFrameCounter++
-            hazardFrameCounter = 0 // Reset
+            hazardFrameCounter = 0
             clearFrameCounter = 0
             if (surfaceFrameCounter >= config.surfaceFramesRequired) {
                 return GuidanceOutput("Caution, stairs ahead.", isEmergency = false, priorityLevel = 2)
@@ -263,7 +258,7 @@ object GuidanceSynthesizer {
 
             if ((isRoadwayReliable || roadwayGroundCheck != null) && isUserWalking) {
                 surfaceFrameCounter++
-                hazardFrameCounter = 0 // Reset
+                hazardFrameCounter = 0
                 clearFrameCounter = 0
                 if (surfaceFrameCounter >= config.surfaceFramesRequired) {
                     return GuidanceOutput("Warning, roadway surface.", isEmergency = false, priorityLevel = 2)
@@ -272,7 +267,6 @@ object GuidanceSynthesizer {
             }
         }
 
-        // Falls wir hier ankommen, gab es keine Gefahren
         hazardFrameCounter = 0
         surfaceFrameCounter = 0
 
@@ -304,6 +298,11 @@ object GuidanceSynthesizer {
         "traffic light" -> "Traffic light"
         "potted plant" -> "Plant"
         "dog" -> "Dog"
+        "cat" -> "Cat"
+        "train" -> "Train"
+        "umbrella" -> "Person with umbrella"
+        "skateboard" -> "Skateboarder"
+        "sports ball" -> "Ball"
         "bicycle" -> "Bicycle"
         "car" -> "Car"
         "motorcycle" -> "Motorcycle"

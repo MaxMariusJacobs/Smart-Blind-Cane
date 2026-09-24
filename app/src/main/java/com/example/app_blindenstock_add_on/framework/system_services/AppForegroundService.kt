@@ -232,7 +232,7 @@ class AppForegroundService : Service(), LifecycleOwner {
                         if (isWalking) lastWalkTimeMs = currentTime
 
                         val currentConfig = AppConfig.currentState.value
-                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig, allowSurfaceScans) ?: return@collect
+                        val analysisResult = detector?.detect(bitmap, isWalking, currentConfig, allowSurfaceScans, isEsp32 = isEspMode) ?: return@collect
 
                         val guidance = GuidanceSynthesizer.synthesize(
                             result = analysisResult,

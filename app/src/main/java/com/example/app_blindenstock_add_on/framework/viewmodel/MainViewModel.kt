@@ -13,7 +13,6 @@ import com.example.app_blindenstock_add_on.data.video.LocalCameraSource
 import com.example.app_blindenstock_add_on.data.video.MjpegStreamer
 import com.example.app_blindenstock_add_on.data.video.VideoSource
 import com.example.app_blindenstock_add_on.data.yolov11n_gpu.YoloDetector
-import com.example.app_blindenstock_add_on.domain.model.CorridorAnalysis
 import com.example.app_blindenstock_add_on.domain.model.Detection
 import com.example.app_blindenstock_add_on.domain.synthesizer.GuidanceSynthesizer
 import com.example.app_blindenstock_add_on.framework.system_services.AppForegroundService
@@ -37,7 +36,6 @@ data class MainUiState(
     val currentScreen: AppScreen = AppScreen.START,
     val currentFrame: Bitmap? = null,
     val detections: List<Detection> = emptyList(),
-    val corridor: CorridorAnalysis = CorridorAnalysis(),
     val primarySurface: String = "unknown",
     val currentGuidancePhrase: String = "Clear",
     val isSurfaceScanEnabled: Boolean = false,
@@ -240,7 +238,7 @@ class MainViewModel : ViewModel() {
 
                         if (isWalking) lastWalkTimeMs = currentTime
 
-                        val result = detector?.detect(bitmap, isWalking, currentConfig, runSurface) ?: return@collect
+                        val result = detector?.detect(bitmap, isWalking, currentConfig, runSurface, isEsp32 = isEspMode) ?: return@collect
                         val infTime = detector?.lastInferenceTime ?: 0L
 
                         val guidance = GuidanceSynthesizer.synthesize(

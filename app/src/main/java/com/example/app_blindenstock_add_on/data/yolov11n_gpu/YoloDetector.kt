@@ -20,7 +20,6 @@ import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
-import kotlin.math.sqrt
 
 class YoloDetector(private val context: Context) {
 
@@ -65,32 +64,16 @@ class YoloDetector(private val context: Context) {
         "hair drier", "toothbrush"
     )
 
+    // Erweiterter Filter für urbane Sicherheit
     private val relevantObstacles = setOf(
-        "person", "bicycle", "car", "motorcycle", "bus", "truck", "dog",
-        "bench", "chair", "fire hydrant", "stop sign", "traffic light", "potted plant",
-        "parking meter", "suitcase", "backpack"
+        "person", "bicycle", "car", "motorcycle", "bus", "truck", "train",
+        "dog", "cat", "bench", "chair", "fire hydrant", "stop sign",
+        "traffic light", "potted plant", "parking meter", "suitcase",
+        "backpack", "umbrella", "skateboard", "sports ball"
     )
-
-    private val classCounters = mutableMapOf<String, Int>()
-    private var trackedObjects = mutableListOf<TrackedState>()
-    private val maxDistanceThreshold = 0.20f
-    private val objectGracePeriodMs = 400L
-
-    private var frameSequence: Long = 0
-    private var cachedSurfaces: List<Detection> = emptyList()
 
     var lastInferenceTime: Long = 0
         private set
-
-    data class TrackedState(
-        val trackId: Int,
-        var detection: Detection,
-        var lastSeen: Long,
-        var prevX: Float,
-        var prevY: Float,
-        var smoothedFloorY: Float,
-        var smoothedArea: Float
-    )
 
     init {
         loadModels()
@@ -145,15 +128,15 @@ class YoloDetector(private val context: Context) {
         bitmap: Bitmap,
         isUserWalking: Boolean = true,
         config: AppConfigState,
-        runSurfaceModel: Boolean = true
+        runSurfaceModel: Boolean = true,
+        isEsp32: Boolean = false // <-- NEUER PARAMETER
     ): FrameAnalysisResult = mutex.withLock {
         coroutineScope {
             if (objectInterpreter == null && surfaceInterpreter == null) {
-                return@coroutineScope FrameAnalysisResult(emptyList(), CorridorAnalysis(), "unknown", 0f)
+                return@coroutineScope FrameAnalysisResult(emptyList(), "unknown", 0f) // <-- Angepasst, CorridorAnalysis entfernt
             }
 
             val startTime = System.currentTimeMillis()
-            frameSequence++
 
             val scale = minOf(320f / bitmap.width.toFloat(), 320f / bitmap.height.toFloat())
             val dx = (320f - bitmap.width * scale) / 2f
@@ -188,7 +171,6 @@ class YoloDetector(private val context: Context) {
 
             val deferredSurfaces = async(Dispatchers.Default) {
                 if (!runSurfaceModel) {
-                    cachedSurfaces = emptyList()
                     return@async emptyList<Detection>()
                 }
 
@@ -203,26 +185,23 @@ class YoloDetector(private val context: Context) {
                     }
                     rawSurfaces.addAll(processSurfaceTensors(outputSurface0[0], padX, padY, activeW, activeH, config.confThresholdSurface))
                 }
-                cachedSurfaces = applyNMS(rawSurfaces, config.nmsIouThreshold)
-
-                cachedSurfaces
+                applyNMS(rawSurfaces, config.nmsIouThreshold)
             }
 
             val filteredObjects = deferredObjects.await()
             val filteredSurfaces = deferredSurfaces.await()
 
             val combinedCandidates = filteredSurfaces + filteredObjects
-            val stabilizedDetections = updateTracking(combinedCandidates, isUserWalking, config)
+            val prioritizedDetections = assignPriorities(combinedCandidates, config, isEsp32) // <-- KORRIGIERTER AUFRUF
 
-            val topSurface = stabilizedDetections
+            val topSurface = prioritizedDetections
                 .filter { it.className in listOf("sidewalk", "path", "roadway") }
                 .maxByOrNull { it.score }
 
             lastInferenceTime = System.currentTimeMillis() - startTime
 
             FrameAnalysisResult(
-                detections = stabilizedDetections,
-                corridor = CorridorAnalysis(),
+                detections = prioritizedDetections,
                 primarySurface = topSurface?.className ?: "unknown",
                 surfaceConfidence = topSurface?.score ?: 0f
             )
@@ -335,153 +314,33 @@ class YoloDetector(private val context: Context) {
         return candidates
     }
 
-    private fun updateTracking(currentDetections: List<Detection>, isUserWalking: Boolean, config: AppConfigState): List<Detection> {
-        val now = System.currentTimeMillis()
-        val matchedCurrent = BooleanArray(currentDetections.size)
+    // --- KORRIGIERTE FUNKTION MIT CONFIG-ANBINDUNG ---
+    private fun assignPriorities(currentDetections: List<Detection>, config: AppConfigState, isEsp32: Boolean): List<Detection> {
         val result = mutableListOf<Detection>()
 
-        for (tracked in trackedObjects) {
-            val tCenter = getCenter(tracked.detection.boundingBox)
-            var bestIdx = -1
-            var minDistance = Float.MAX_VALUE
+        val stopFloorThreshold = if (isEsp32) config.stopFloorEsp else config.stopFloorPhone
+        val stopAreaThreshold = if (isEsp32) config.stopAreaEsp else config.stopAreaPhone
+        val warningAreaThreshold = if (isEsp32) config.warningAreaEsp else config.warningAreaPhone
 
-            for (i in currentDetections.indices) {
-                if (matchedCurrent[i]) continue
-                if (currentDetections[i].className != tracked.detection.className) continue
+        // Medium Warning nehmen wir als Basiswert leicht über dem Person/Object Threshold
+        val mediumFloorThreshold = if (isEsp32) minOf(config.personFloorEsp, config.objectFloorEsp) else minOf(config.personFloorPhone, config.objectFloorPhone)
 
-                val cCenter = getCenter(currentDetections[i].boundingBox)
-                val dist = distance(tCenter, cCenter)
-                if (dist < minDistance && dist < maxDistanceThreshold) {
-                    minDistance = dist
-                    bestIdx = i
-                }
+        for (rawDet in currentDetections) {
+            val b = rawDet.boundingBox
+            val floorY = b.y + b.height
+            val area = b.width * b.height
+
+            val priority = when {
+                floorY > stopFloorThreshold || area >= stopAreaThreshold -> "CRITICAL"
+                floorY > (stopFloorThreshold + mediumFloorThreshold) / 2f || area >= warningAreaThreshold -> "HIGH"
+                floorY > mediumFloorThreshold -> "MEDIUM"
+                else -> "LOW"
             }
 
-            if (bestIdx != -1) {
-                matchedCurrent[bestIdx] = true
-                val rawDet = currentDetections[bestIdx]
-                val b = rawDet.boundingBox
-                val cx = b.x + b.width / 2f
-                val cy = b.y + b.height / 2f
-                val floorY = (b.y + b.height).coerceIn(0f, 1f)
-                val area = b.width * b.height
-
-                // EMA-Glättung filtert Geh-Bewegungen (Walking Bob) effizient
-                val alpha = 0.25f
-                val currentSmoothedFloorY = (alpha * floorY) + ((1.0f - alpha) * tracked.smoothedFloorY)
-                val currentSmoothedArea = (alpha * area) + ((1.0f - alpha) * tracked.smoothedArea)
-
-                val dt = (now - tracked.lastSeen) / 1000.0f
-                val dFloorY = if (dt > 0) (currentSmoothedFloorY - tracked.smoothedFloorY) / dt else 0f
-                val dAreaPerSec = if (dt > 0) (currentSmoothedArea - tracked.smoothedArea) / dt else 0f
-
-                val trend = when {
-                    dAreaPerSec > config.trendGrowthPerSec -> "growing"
-                    dAreaPerSec < -config.trendGrowthPerSec -> "shrinking"
-                    else -> "constant"
-                }
-
-                val motion = when {
-                    isUserWalking && dFloorY > 0.04f -> "user_approaching"
-                    dFloorY > 0.08f -> "approaching_fast"
-                    else -> "stationary"
-                }
-
-                val ttcSec = if (dFloorY > 0.02f && currentSmoothedFloorY < 0.98f) {
-                    ((1.0f - currentSmoothedFloorY) / dFloorY).coerceIn(0.1f, 10.0f)
-                } else -1.0f
-
-                val clockPos = when {
-                    cx < 0.35f -> "10_o_clock"
-                    cx < 0.45f -> "11_o_clock"
-                    cx <= 0.55f -> "12_o_clock"
-                    cx <= 0.65f -> "1_o_clock"
-                    else -> "2_o_clock"
-                }
-
-                val priority = when {
-                    currentSmoothedFloorY > 0.80f || currentSmoothedArea >= config.stopAreaPhone || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
-                    trend == "growing" || currentSmoothedFloorY > 0.60f || currentSmoothedArea >= config.warningAreaPhone -> "HIGH"
-                    currentSmoothedFloorY > 0.40f -> "MEDIUM"
-                    else -> "LOW"
-                }
-
-                val updatedDet = rawDet.copy(
-                    classId = tracked.trackId,
-                    motion = motion,
-                    trend = trend,
-                    priority = priority,
-                    clockPos = clockPos,
-                    ttcSec = ttcSec
-                )
-
-                tracked.detection = updatedDet
-                tracked.lastSeen = now
-                tracked.prevX = cx
-                tracked.prevY = cy
-                tracked.smoothedFloorY = currentSmoothedFloorY
-                tracked.smoothedArea = currentSmoothedArea
-
-                result.add(updatedDet)
-            }
+            result.add(rawDet.copy(priority = priority))
         }
 
-        for (i in currentDetections.indices) {
-            if (!matchedCurrent[i]) {
-                val rawDet = currentDetections[i]
-                val nextId = (classCounters[rawDet.className] ?: 0) + 1
-                classCounters[rawDet.className] = nextId
-
-                val b = rawDet.boundingBox
-                val cx = b.x + b.width / 2f
-                val floorY = b.y + b.height
-                val area = b.width * b.height
-
-                val clockPos = when {
-                    cx < 0.35f -> "10_o_clock"
-                    cx < 0.45f -> "11_o_clock"
-                    cx <= 0.55f -> "12_o_clock"
-                    cx <= 0.65f -> "1_o_clock"
-                    else -> "2_o_clock"
-                }
-
-                val priority = when {
-                    floorY > 0.80f || area >= config.stopAreaPhone -> "CRITICAL"
-                    floorY > 0.60f || area >= config.warningAreaPhone -> "HIGH"
-                    else -> "LOW"
-                }
-
-                val newDet = rawDet.copy(
-                    classId = nextId,
-                    clockPos = clockPos,
-                    priority = priority
-                )
-
-                trackedObjects.add(
-                    TrackedState(
-                        trackId = nextId,
-                        detection = newDet,
-                        lastSeen = now,
-                        prevX = cx,
-                        prevY = b.y + b.height / 2f,
-                        smoothedFloorY = floorY,
-                        smoothedArea = area
-                    )
-                )
-                result.add(newDet)
-            }
-        }
-
-        trackedObjects.removeAll { now - it.lastSeen > objectGracePeriodMs }
         return result
-    }
-
-    private fun getCenter(b: BoundingBox) = Pair(b.x + b.width / 2f, b.y + b.height / 2f)
-
-    private fun distance(p1: Pair<Float, Float>, p2: Pair<Float, Float>): Float {
-        val dx = p1.first - p2.first
-        val dy = p1.second - p2.second
-        return sqrt((dx * dx + dy * dy).toDouble()).toFloat()
     }
 
     private fun applyNMS(detections: List<Detection>, threshold: Float): List<Detection> {
