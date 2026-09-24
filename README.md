@@ -46,6 +46,7 @@ The Android app is deeply optimized for the Tensor architecture of Google Pixel 
 * Connect the Pixel smartphone via USB (USB debugging enabled).
 * Build the project and install the app (`Shift + F10`).
 * On the first launch, it is mandatory to grant all requested permissions (Camera, Location, Audio, Background Services).
+* Also go into the accessibility-Settings and grant the App permission there. 
 
 
 
@@ -65,4 +66,4 @@ The Android app is deeply optimized for the Tensor architecture of Google Pixel 
 
 3. **Everyday Operation:**
 * **Live Tuning:** Warning distances and walking corridors can be calibrated separately for the smartphone and ESP32 camera via the gear icon.
-* **Scene Analysis (Gemini):** Press one of the **volume buttons**, followed by an immediate counter-movement (e.g., Volume Up and immediately Volume Down within 0.5 seconds). Normal walking navigation will pause, the system takes a snapshot of the current camera view, and reads out a detailed description of the environment. This also works when the screen is locked and the phone is in your pocket.
+* **Scene Analysis (Gemini):** Press one of the **volume buttons**, followed by an immediate counter-movement (e.g., Volume Up and immediately Volume Down within 0.8 seconds). Press the **Power-Button** before, if the screen is off. Normal walking navigation will pause, the system takes a snapshot of the current camera view, and reads out a detailed description of the environment. This also works when the screen is locked and the phone is in your pocket.
