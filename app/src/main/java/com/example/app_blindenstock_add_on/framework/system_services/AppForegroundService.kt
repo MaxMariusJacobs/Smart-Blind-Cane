@@ -86,19 +86,20 @@ class AppForegroundService : Service(), LifecycleOwner {
             if (intent.action == "android.media.VOLUME_CHANGED_ACTION") {
                 val newVol = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
                 val oldVol = intent.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)
-                val streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)
 
-                if (streamType == AudioManager.STREAM_MUSIC && newVol != -1 && oldVol != -1) {
+                // WICHTIG: Die Prüfung auf 'AudioManager.STREAM_MUSIC' wurde restlos entfernt!
+                // So funktioniert der Trigger auch, wenn das OS stattdessen den Klingelton ändert.
+                if (newVol != -1 && oldVol != -1 && newVol != oldVol) {
                     val direction = newVol.compareTo(oldVol)
-                    if (direction != 0) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastVolChangeTime < 500L && direction != lastVolDirection) {
-                            lastVolChangeTime = 0L
-                            triggerGeminiAnalysis()
-                        } else {
-                            lastVolDirection = direction
-                            lastVolChangeTime = now
-                        }
+                    val now = System.currentTimeMillis()
+
+                    // Zeitfenster auf 800ms erhöht für zuverlässigere Bedienung in der Hosentasche
+                    if (now - lastVolChangeTime < 800L && direction != lastVolDirection) {
+                        lastVolChangeTime = 0L
+                        triggerGeminiAnalysis()
+                    } else {
+                        lastVolDirection = direction
+                        lastVolChangeTime = now
                     }
                 }
             }

@@ -84,7 +84,8 @@ class MainActivity : ComponentActivity() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val isBackground = viewModel.uiState.value.isBackgroundRunning
 
-        // Wenn der Hintergrunddienst läuft, kümmert sich dieser um den Trigger
+        // Wenn der Hintergrunddienst läuft, kümmert sich dieser um den Trigger.
+        // Das verhindert, dass Gemini zweimal gleichzeitig API-Calls feuert!
         if (isBackground) return super.onKeyDown(keyCode, event)
 
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
@@ -93,8 +94,8 @@ class MainActivity : ComponentActivity() {
                 val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
                 val now = System.currentTimeMillis()
 
-                // Prüfen ob die andere Taste innerhalb von 500ms gedrückt wurde (Zick-Zack)
-                if (now - lastVolTime < 500L && direction != lastVolDirection) {
+                // Zeitfenster auf 800ms erhöht (analog zum Background Service)
+                if (now - lastVolTime < 800L && direction != lastVolDirection) {
                     lastVolTime = 0L
                     viewModel.triggerSceneDescription()
                 } else {
