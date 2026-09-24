@@ -73,13 +73,11 @@ class AppForegroundService : Service(), LifecycleOwner {
     private var fpsWindowStart = 0L
     private var smoothedFps = 0
 
-    // --- Gemini Background Setup ---
     @Volatile private var latestFrame: Bitmap? = null
     private var isFetchingGemini = false
     private val sceneDescriptionService = SceneDescriptionService()
     private var lastWalkTimeMs = System.currentTimeMillis()
 
-    // Logik für den universellen Volume-Trigger
     private var lastVolDirection = 0
     private var lastVolChangeTime = 0L
 
@@ -94,7 +92,6 @@ class AppForegroundService : Service(), LifecycleOwner {
                     val direction = newVol.compareTo(oldVol)
                     if (direction != 0) {
                         val now = System.currentTimeMillis()
-                        // Beide Tasten gedrückt: Lautstärke springt hoch und sofort wieder runter (< 500ms)
                         if (now - lastVolChangeTime < 500L && direction != lastVolDirection) {
                             lastVolChangeTime = 0L
                             triggerGeminiAnalysis()
@@ -130,7 +127,6 @@ class AppForegroundService : Service(), LifecycleOwner {
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "AppForegroundService::WifiLock")
 
-        // Registriere den globalen Listener für Lautstärkeänderungen
         val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(volumeReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -175,6 +171,9 @@ class AppForegroundService : Service(), LifecycleOwner {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // WICHTIG: Schützt vor doppelten Streams, falls Android den Service unerwartet neu triggert
+        if (_metrics.value.isRunning) return START_STICKY
+
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
 
@@ -219,7 +218,7 @@ class AppForegroundService : Service(), LifecycleOwner {
                     ?.collect { bitmap ->
                         val currentTime = System.currentTimeMillis()
 
-                        latestFrame = bitmap // Frame sicher für Gemini hinterlegen
+                        latestFrame = bitmap
 
                         fpsCounter++
                         val elapsed = currentTime - fpsWindowStart
@@ -230,7 +229,7 @@ class AppForegroundService : Service(), LifecycleOwner {
                         }
 
                         val isWalking = motionTracker?.isUserWalking ?: false
-                        if (isWalking) lastWalkTimeMs = currentTime // Standzeit tracken
+                        if (isWalking) lastWalkTimeMs = currentTime
 
                         val currentConfig = AppConfig.currentState.value
                         val analysisResult = detector?.detect(bitmap, isWalking, currentConfig, allowSurfaceScans) ?: return@collect
@@ -270,8 +269,13 @@ class AppForegroundService : Service(), LifecycleOwner {
 
         unregisterReceiver(volumeReceiver)
 
+        // 1. ZUERST Netzwerk trennen
         videoSource?.stop()
         videoSource = null
+
+        // 2. Coroutines beenden
+        serviceJob.cancel()
+
         motionTracker?.stop()
         motionTracker = null
         speechManager?.shutdown()
@@ -287,7 +291,6 @@ class AppForegroundService : Service(), LifecycleOwner {
         if (wakeLock?.isHeld == true) wakeLock?.release()
 
         _metrics.value = ServiceMetrics(isRunning = false)
-        serviceJob.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

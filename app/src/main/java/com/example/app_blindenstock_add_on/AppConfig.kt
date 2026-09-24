@@ -7,9 +7,9 @@ data class AppConfigState(
     val corridorLeftPhone: Float = 0.32f,
     val corridorRightPhone: Float = 0.68f,
 
-    // Geh-Korridor für ESP32-Kamera
-    val corridorLeftEsp: Float = 0.32f,
-    val corridorRightEsp: Float = 0.68f,
+    // Geh-Korridor für ESP32-Kamera (Vertikal: fast gesamte Breite relevant)
+    val corridorLeftEsp: Float = 0.15f,
+    val corridorRightEsp: Float = 0.85f,
 
     // Warnabstände (Kante) für interne Smartphone-Kamera
     val stopFloorPhone: Float = 0.85f,
@@ -21,15 +21,15 @@ data class AppConfigState(
     val stopAreaPhone: Float = 0.35f,
     val warningAreaPhone: Float = 0.15f,
 
-    // Warnabstände (Kante) für ESP32-Kamera
-    val stopFloorEsp: Float = 0.84f,
-    val personFloorEsp: Float = 0.62f,
-    val objectFloorEsp: Float = 0.64f,
-    val stairsFloorEsp: Float = 0.62f,
+    // Warnabstände (Kante) für ESP32-Kamera (Vertikal: Kante sitzt tiefer)
+    val stopFloorEsp: Float = 0.88f,
+    val personFloorEsp: Float = 0.50f,
+    val objectFloorEsp: Float = 0.60f,
+    val stairsFloorEsp: Float = 0.55f,
 
-    // Warnabstände (Fläche/Größe) für ESP32-Kamera
-    val stopAreaEsp: Float = 0.35f,
-    val warningAreaEsp: Float = 0.15f,
+    // Warnabstände (Fläche/Größe) für ESP32-Kamera (Vertikal: Objekte füllen mehr Fläche)
+    val stopAreaEsp: Float = 0.50f,
+    val warningAreaEsp: Float = 0.25f,
 
     // KI-Erkennungs-Schwellenwerte
     val confThresholdObjects: Float = 0.40f,

@@ -2,6 +2,7 @@ package com.example.app_blindenstock_add_on.data.video
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -29,14 +30,16 @@ class MjpegStreamer(
 
     private val streamClient = client.newBuilder()
         .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
     private val decodeOptions = BitmapFactory.Options().apply {
-        // inSampleSize = 2 ENTFERNT (siehe Punkt 2)
         inPreferredConfig = Bitmap.Config.RGB_565
     }
+
+    // NEU: Rotationsmatrix für die vertikale Brustgurt-Montage
+    private val rotationMatrix = Matrix().apply { postRotate(90f) }
 
     override fun getFrames(): Flow<Bitmap> = flow {
         isManuallyStopped = false
@@ -46,8 +49,8 @@ class MjpegStreamer(
         while (currentCoroutineContext().isActive && !isManuallyStopped) {
             val request = Request.Builder()
                 .url(url)
-                .header("Cache-Control", "no-cache")
-                .header("Connection", "keep-alive")
+                .header("Cache-Control", "no-store")
+                .header("Connection", "close")
                 .build()
 
             val call = streamClient.newCall(request)
@@ -71,7 +74,6 @@ class MjpegStreamer(
                 retryAttempt = 0
                 wasConnectedBefore = true
 
-                // --- NEU: Okio nutzen für extrem schnelles, GC-schonendes Lesen ---
                 val source = body.source()
                 var contentLength = -1
 
@@ -82,15 +84,18 @@ class MjpegStreamer(
                         if (line.startsWith("Content-Length:", ignoreCase = true)) {
                             contentLength = line.substringAfter(":").trim().toIntOrNull() ?: -1
 
-                            // Die leere Zeile (\r\n) nach dem Header überspringen
-                            source.readUtf8Line()
+                            source.readUtf8Line() // Leere Zeile überspringen
 
                             if (contentLength > 0) {
-                                // Blockiert, bis das gesamte Bild im RAM ist - ohne Byte-Schleife
                                 val imageBytes = source.readByteArray(contentLength.toLong())
-                                val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, decodeOptions)
-                                if (bitmap != null) {
-                                    emit(bitmap)
+                                val rawBitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, decodeOptions)
+
+                                if (rawBitmap != null) {
+                                    // NEU: Bild direkt nach dem Dekodieren drehen
+                                    val rotatedBitmap = Bitmap.createBitmap(
+                                        rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, rotationMatrix, true
+                                    )
+                                    emit(rotatedBitmap)
                                 }
                             }
                         }

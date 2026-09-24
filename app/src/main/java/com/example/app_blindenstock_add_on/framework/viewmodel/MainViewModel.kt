@@ -202,6 +202,9 @@ class MainViewModel : ViewModel() {
         streamJob = viewModelScope.launch(Dispatchers.Default) {
             cleanupJob?.join()
 
+            // WICHTIG: Gib dem ESP32 und dem OS Zeit, den alten Socket des Background-Services zu bereinigen
+            if (isEspMode) delay(300)
+
             detector = YoloDetector(context)
             speechManager = SpeechFeedbackManager(context)
             motionTracker = UserMotionTracker(context).apply { start() }
@@ -293,14 +296,20 @@ class MainViewModel : ViewModel() {
             isStreaming = false,
             isLoading = false,
             currentFrame = null,
-            detections = emptyList()
+            detections = emptyList(),
+            currentFps = 0,
+            inferenceTime = 0
         )
 
         cleanupJob = viewModelScope.launch(Dispatchers.IO) {
+            // 1. ZUERST das Netzwerk abklemmen (verhindert Deadlocks im I/O)
+            vs?.stop()
+
+            // 2. JETZT auf die Coroutine warten (sie kann nun beenden, da I/O gekappt ist)
             jobToCancel?.cancel()
             jobToCancel?.join()
 
-            vs?.stop()
+            // 3. Restliche Ressourcen schließen
             mt?.stop()
             sm?.shutdown()
             det?.close()
@@ -354,7 +363,6 @@ class MainViewModel : ViewModel() {
         val prefs = context.getSharedPreferences("tuning_prefs", Context.MODE_PRIVATE)
         if (!prefs.contains("stopFloorPhone")) return
 
-        // Abwärtskompatibilität für alte Speicherstände
         val oldLeft = prefs.getFloat("corridorLeft", 0.32f)
         val oldRight = prefs.getFloat("corridorRight", 0.68f)
 
@@ -389,7 +397,6 @@ class MainViewModel : ViewModel() {
             audioDirectionChangeSec = prefs.getFloat("audioDirectionChangeSec", 1.4f),
             audioStandardSec = prefs.getFloat("audioStandardSec", 2.2f),
             audioPersistentRepeatSec = prefs.getFloat("audioPersistentRepeatSec", 8.0f)
-
         )
         com.example.app_blindenstock_add_on.AppConfig.update(loaded)
     }

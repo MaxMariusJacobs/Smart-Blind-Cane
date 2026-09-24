@@ -88,8 +88,8 @@ class YoloDetector(private val context: Context) {
         var lastSeen: Long,
         var prevX: Float,
         var prevY: Float,
-        var prevFloorY: Float,
-        var prevArea: Float
+        var smoothedFloorY: Float,
+        var smoothedArea: Float
     )
 
     init {
@@ -366,9 +366,14 @@ class YoloDetector(private val context: Context) {
                 val floorY = (b.y + b.height).coerceIn(0f, 1f)
                 val area = b.width * b.height
 
+                // EMA-Glättung filtert Geh-Bewegungen (Walking Bob) effizient
+                val alpha = 0.25f
+                val currentSmoothedFloorY = (alpha * floorY) + ((1.0f - alpha) * tracked.smoothedFloorY)
+                val currentSmoothedArea = (alpha * area) + ((1.0f - alpha) * tracked.smoothedArea)
+
                 val dt = (now - tracked.lastSeen) / 1000.0f
-                val dFloorY = if (dt > 0) (floorY - tracked.prevFloorY) / dt else 0f
-                val dAreaPerSec = if (dt > 0) (area - tracked.prevArea) / dt else 0f
+                val dFloorY = if (dt > 0) (currentSmoothedFloorY - tracked.smoothedFloorY) / dt else 0f
+                val dAreaPerSec = if (dt > 0) (currentSmoothedArea - tracked.smoothedArea) / dt else 0f
 
                 val trend = when {
                     dAreaPerSec > config.trendGrowthPerSec -> "growing"
@@ -382,8 +387,8 @@ class YoloDetector(private val context: Context) {
                     else -> "stationary"
                 }
 
-                val ttcSec = if (dFloorY > 0.02f && floorY < 0.98f) {
-                    ((1.0f - floorY) / dFloorY).coerceIn(0.1f, 10.0f)
+                val ttcSec = if (dFloorY > 0.02f && currentSmoothedFloorY < 0.98f) {
+                    ((1.0f - currentSmoothedFloorY) / dFloorY).coerceIn(0.1f, 10.0f)
                 } else -1.0f
 
                 val clockPos = when {
@@ -395,9 +400,9 @@ class YoloDetector(private val context: Context) {
                 }
 
                 val priority = when {
-                    floorY > 0.80f || area >= config.stopAreaPhone || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
-                    trend == "growing" || floorY > 0.60f || area >= config.warningAreaPhone -> "HIGH"
-                    floorY > 0.40f -> "MEDIUM"
+                    currentSmoothedFloorY > 0.80f || currentSmoothedArea >= config.stopAreaPhone || (ttcSec in 0.2f..1.3f && trend == "growing") -> "CRITICAL"
+                    trend == "growing" || currentSmoothedFloorY > 0.60f || currentSmoothedArea >= config.warningAreaPhone -> "HIGH"
+                    currentSmoothedFloorY > 0.40f -> "MEDIUM"
                     else -> "LOW"
                 }
 
@@ -414,8 +419,8 @@ class YoloDetector(private val context: Context) {
                 tracked.lastSeen = now
                 tracked.prevX = cx
                 tracked.prevY = cy
-                tracked.prevFloorY = floorY
-                tracked.prevArea = area
+                tracked.smoothedFloorY = currentSmoothedFloorY
+                tracked.smoothedArea = currentSmoothedArea
 
                 result.add(updatedDet)
             }
@@ -459,8 +464,8 @@ class YoloDetector(private val context: Context) {
                         lastSeen = now,
                         prevX = cx,
                         prevY = b.y + b.height / 2f,
-                        prevFloorY = floorY,
-                        prevArea = b.width * b.height
+                        smoothedFloorY = floorY,
+                        smoothedArea = area
                     )
                 )
                 result.add(newDet)
