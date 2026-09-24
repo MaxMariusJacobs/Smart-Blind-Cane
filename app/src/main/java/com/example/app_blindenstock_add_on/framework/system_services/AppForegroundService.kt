@@ -4,13 +4,13 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
-import android.media.AudioManager
+import android.media.VolumeProvider
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -34,6 +34,7 @@ import com.example.app_blindenstock_add_on.framework.viewmodel.GeminiStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,33 +79,10 @@ class AppForegroundService : Service(), LifecycleOwner {
     private val sceneDescriptionService = SceneDescriptionService()
     private var lastWalkTimeMs = System.currentTimeMillis()
 
+    // --- NEU: MediaSession Variablen ---
+    private var mediaSession: MediaSession? = null
     private var lastVolDirection = 0
     private var lastVolChangeTime = 0L
-
-    private val volumeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == "android.media.VOLUME_CHANGED_ACTION") {
-                val newVol = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
-                val oldVol = intent.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)
-
-                // WICHTIG: Die Prüfung auf 'AudioManager.STREAM_MUSIC' wurde restlos entfernt!
-                // So funktioniert der Trigger auch, wenn das OS stattdessen den Klingelton ändert.
-                if (newVol != -1 && oldVol != -1 && newVol != oldVol) {
-                    val direction = newVol.compareTo(oldVol)
-                    val now = System.currentTimeMillis()
-
-                    // Zeitfenster auf 800ms erhöht für zuverlässigere Bedienung in der Hosentasche
-                    if (now - lastVolChangeTime < 800L && direction != lastVolDirection) {
-                        lastVolChangeTime = 0L
-                        triggerGeminiAnalysis()
-                    } else {
-                        lastVolDirection = direction
-                        lastVolChangeTime = now
-                    }
-                }
-            }
-        }
-    }
 
     companion object {
         private const val CHANNEL_ID = "AppForegroundServiceChannel"
@@ -128,11 +106,35 @@ class AppForegroundService : Service(), LifecycleOwner {
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "AppForegroundService::WifiLock")
 
-        val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(volumeReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(volumeReceiver, filter)
+        setupMediaSessionTrigger()
+    }
+
+    // --- NEU: Der ultimative Hardware-Trigger Hack ---
+    private fun setupMediaSessionTrigger() {
+        mediaSession = MediaSession(this, "SmartCaneMediaSession").apply {
+            // Täuscht Android vor, dass wir Audio abspielen
+            setPlaybackState(
+                PlaybackState.Builder()
+                    .setState(PlaybackState.STATE_PLAYING, 0, 1.0f)
+                    .build()
+            )
+            // Zwingt Android, physische Tasten direkt hierher umzuleiten (Remote Volume)
+            setPlaybackToRemote(object : VolumeProvider(VOLUME_CONTROL_RELATIVE, 100, 50) {
+                override fun onAdjustVolume(direction: Int) {
+                    if (direction == 0) return // Ignorieren, falls das OS ein Null-Event schickt
+
+                    val now = System.currentTimeMillis()
+                    // 800ms Fenster für den Zick-Zack-Trigger
+                    if (now - lastVolChangeTime < 800L && direction != lastVolDirection) {
+                        lastVolChangeTime = 0L
+                        triggerGeminiAnalysis()
+                    } else {
+                        lastVolDirection = direction
+                        lastVolChangeTime = now
+                    }
+                }
+            })
+            isActive = true
         }
     }
 
@@ -165,14 +167,13 @@ class AppForegroundService : Service(), LifecycleOwner {
                 _metrics.value = _metrics.value.copy(geminiStatus = GeminiStatus.ERROR)
             } finally {
                 isFetchingGemini = false
-                kotlinx.coroutines.delay(3000)
+                delay(3000)
                 _metrics.value = _metrics.value.copy(geminiStatus = GeminiStatus.IDLE)
             }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // WICHTIG: Schützt vor doppelten Streams, falls Android den Service unerwartet neu triggert
         if (_metrics.value.isRunning) return START_STICKY
 
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
@@ -199,6 +200,7 @@ class AppForegroundService : Service(), LifecycleOwner {
         fpsCounter = 0
         fpsWindowStart = System.currentTimeMillis()
         smoothedFps = 0
+        lastWalkTimeMs = System.currentTimeMillis() // Reset beim Start
 
         serviceScope.launch {
             try {
@@ -268,13 +270,13 @@ class AppForegroundService : Service(), LifecycleOwner {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
 
-        unregisterReceiver(volumeReceiver)
+        mediaSession?.isActive = false
+        mediaSession?.release()
+        mediaSession = null
 
-        // 1. ZUERST Netzwerk trennen
         videoSource?.stop()
         videoSource = null
 
-        // 2. Coroutines beenden
         serviceJob.cancel()
 
         motionTracker?.stop()
